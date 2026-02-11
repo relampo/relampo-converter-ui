@@ -41,6 +41,19 @@ function getStringProp(node, name) {
   return prop?.textContent?.trim() ?? '';
 }
 
+function getTextProp(node, name) {
+  // JMeter stores some values as intProp/longProp depending on element.
+  const tags = ['stringProp', 'intProp', 'longProp'];
+  for (const tag of tags) {
+    const prop = findDirectChild(node, tag, 'name', name);
+    const value = prop?.textContent?.trim();
+    if (value != null && value !== '') {
+      return value;
+    }
+  }
+  return '';
+}
+
 function getBoolProp(node, name) {
   const prop = findDirectChild(node, 'boolProp', 'name', name);
   return (prop?.textContent?.trim() ?? '').toLowerCase() === 'true';
@@ -392,7 +405,7 @@ function parseAssertions(hashTreeNode, context) {
       // Response Assertion
       if (tag === 'ResponseAssertion') {
         const testField = getStringProp(child, 'Assertion.test_field');
-        const testType = getStringProp(child, 'Assertion.test_type');
+        const testType = getTextProp(child, 'Assertion.test_type');
         
         const testStrings = findDirectChild(child, 'collectionProp', 'name', 'Asserion.test_strings');
         
@@ -512,7 +525,7 @@ function convertGroovyToJavaScript(groovyCode) {
   jsCode = jsCode.replace(/\.contains\(/g, '.includes(');
   
   // Convert Base64 encoding
-  jsCode = jsCode.replace(/Base64\.getEncoder\(\)\.encode\([^)]+\.getBytes\(\)\)/g, 'btoa(credentials)');
+  jsCode = jsCode.replace(/Base64\.getEncoder\(\)\.encode\(\s*([^)]+?)\.getBytes\(\)\s*\)/g, 'btoa($1)');
   jsCode = jsCode.replace(/Base64\.getDecoder\(\)\.decode\(/g, 'atob(');
   
   // Convert variable declarations: def → var/let/const
@@ -644,6 +657,8 @@ function parsePrePostProcessors(hashTreeNode, context) {
 }
 
 function convertSamplerToStep(sampler, samplerHashTree, context = {}) {
+  const countStats = context.countStats !== false;
+
   const method = (getStringProp(sampler, 'HTTPSampler.method') || 'GET').toUpperCase();
   const args = extractSamplerArguments(sampler);
   const postBodyRaw = getBoolProp(sampler, 'HTTPSampler.postBodyRaw');
@@ -701,7 +716,7 @@ function convertSamplerToStep(sampler, samplerHashTree, context = {}) {
   // Add request-specific spark scripts
   if (sparkScripts) {
     allSparkScripts.push(...sparkScripts);
-    if (context.stats) context.stats.sparkScripts += sparkScripts.length;
+    if (countStats && context.stats) context.stats.sparkScripts += sparkScripts.length;
   }
   
   if (allSparkScripts.length > 0) {
@@ -712,18 +727,18 @@ function convertSamplerToStep(sampler, samplerHashTree, context = {}) {
   const extractors = parseExtractors(samplerHashTree, context);
   if (extractors) {
     request.extract = extractors;
-    if (context.stats) context.stats.extractors += extractors.length;
+    if (countStats && context.stats) context.stats.extractors += extractors.length;
   }
 
   // Add assertions
   const assertions = parseAssertions(samplerHashTree, context);
   if (assertions) {
     request.assert = assertions;
-    if (context.stats) context.stats.assertions += assertions.length;
+    if (countStats && context.stats) context.stats.assertions += assertions.length;
   }
 
   // Count this request
-  if (context.stats) context.stats.requests++;
+  if (countStats && context.stats) context.stats.requests++;
 
   return { request };
 }
@@ -874,14 +889,30 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
     }
 
     if (tag === 'HTTPSamplerProxy') {
-      const stepData = convertSamplerToStep(pair.element, pair.hashTree, context);
       const enabled = pair.element.getAttribute('enabled');
-      
-      // Mark disabled requests with a comment
+
+      // Include disabled samplers in the YAML output, but ensure they won't execute and don't affect stats.
       if (enabled === 'false') {
-        stepData.request['# DISABLED IN JMETER'] = true;
+        const disabledContext = {
+          ...context,
+          // Don't consume thread-group "global" spark scripts on a disabled request.
+          globalSparkAdded: true,
+          // Don't count disabled elements as converted/executed.
+          countStats: false
+        };
+
+        const stepData = convertSamplerToStep(pair.element, pair.hashTree, disabledContext);
+        if (stepData?.request) {
+          stepData.request.name = stepData.request.name
+            ? `[DISABLED IN JMETER] ${stepData.request.name}`
+            : '[DISABLED IN JMETER]';
+        }
+
+        steps.push({ if: 'false', steps: [stepData] });
+        continue;
       }
-      
+
+      const stepData = convertSamplerToStep(pair.element, pair.hashTree, context);
       steps.push(stepData);
       continue;
     }
@@ -903,7 +934,7 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
 
     // Handle Loop Controller
     if (tag === 'LoopController') {
-      const loops = getStringProp(pair.element, 'LoopController.loops');
+      const loops = getTextProp(pair.element, 'LoopController.loops');
       const loopCount = parseInt(loops) || 1;
       const nestedSteps = parseStepsFromHashTree(pair.hashTree, localDefaults, context);
       if (nestedSteps.length > 0) {
