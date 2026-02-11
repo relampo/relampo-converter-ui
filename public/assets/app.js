@@ -240,12 +240,29 @@ function displayConversionSummary( summary ) {
   const unsupportedSection = document.getElementById( 'unsupportedSection' );
   const conversionSummary = document.getElementById( 'conversionSummary' );
   const defaultReference = document.getElementById( 'defaultReference' );
-  
+
   if ( !elementsConverted || !elementsUnsupported || !unsupportedSection || !conversionSummary || !defaultReference ) {
     return;
   }
-  
-  // Build converted elements list
+
+  function renderList( listEl, items, emptyLabel ) {
+    listEl.textContent = '';
+
+    if ( items.length === 0 ) {
+      const li = document.createElement( 'li' );
+      li.textContent = emptyLabel;
+      listEl.appendChild( li );
+      return;
+    }
+
+    for ( const item of items ) {
+      const li = document.createElement( 'li' );
+      li.textContent = item;
+      listEl.appendChild( li );
+    }
+  }
+
+  // Build converted elements list (numbers only, but still render safely)
   const convertedItems = [];
   if ( summary.requests > 0 ) convertedItems.push( `${ summary.requests } HTTP Requests` );
   if ( summary.extractors > 0 ) convertedItems.push( `${ summary.extractors } Extractors` );
@@ -256,22 +273,19 @@ function displayConversionSummary( summary ) {
   if ( summary.timers > 0 ) convertedItems.push( `${ summary.timers } Timers` );
   if ( summary.controllers > 0 ) convertedItems.push( `${ summary.controllers } Controllers` );
   if ( summary.folders > 0 ) convertedItems.push( `${ summary.folders } Folders/Groups` );
-  
-  if ( convertedItems.length === 0 ) {
-    elementsConverted.innerHTML = '<li>No elements converted</li>';
-  } else {
-    elementsConverted.innerHTML = convertedItems.map( item => `<li>${ item }</li>` ).join( '' );
-  }
-  
-  // Build unsupported/limitations list (combine both JMX warnings and Postman limitations)
+
+  renderList( elementsConverted, convertedItems, 'No elements converted' );
+
+  // Unsupported/limitations may contain user-controlled strings; never inject as HTML.
   const allWarnings = [ ...summary.warnings, ...summary.limitations ];
   if ( allWarnings.length > 0 ) {
-    elementsUnsupported.innerHTML = allWarnings.map( warning => `<li>${ warning }</li>` ).join( '' );
+    renderList( elementsUnsupported, allWarnings, '' );
     unsupportedSection.style.display = 'block';
   } else {
+    elementsUnsupported.textContent = '';
     unsupportedSection.style.display = 'none';
   }
-  
+
   // Show summary panel
   conversionSummary.style.display = 'block';
   defaultReference.style.display = 'none';
