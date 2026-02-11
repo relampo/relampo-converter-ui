@@ -206,11 +206,7 @@
         <pre
           class='yaml-output empty'
           id='yamlOutput'
-          data-placeholder='Your converted YAML will appear here...'
-        ><code
-            class='hljs language-yaml'
-            id='yamlCode'
-          ></code></pre>
+          data-placeholder='Your converted YAML will appear here...'><code class='hljs language-yaml' id='yamlCode' /></pre>
 
         <div class='download-actions'>
           <button
@@ -264,6 +260,35 @@
             </svg>
             Copy
           </button>
+          <button
+            class='btn btn-secondary'
+            id='clearBtn'
+            disabled
+          >
+            <svg
+              xmlns='http://www.w3.org/2000/svg'
+              width='16'
+              height='16'
+              viewBox='0 0 24 24'
+              fill='none'
+              stroke='currentColor'
+              stroke-width='2'
+            >
+              <line
+                x1='18'
+                y1='6'
+                x2='6'
+                y2='18'
+              ></line>
+              <line
+                x1='6'
+                y1='6'
+                x2='18'
+                y2='18'
+              ></line>
+            </svg>
+            Clear
+          </button>
         </div>
       </div>
 
@@ -290,7 +315,9 @@
 
         <div class='reference-section'>
           <div class='reference-title'>Generated Output</div>
-          <div class='reference-code'>{`# Relampo YAML generated locally
+          <div class='reference-code'>
+            {
+              `# Relampo YAML generated locally
 test:
   name: "Imported Collection"
   version: "1.0"
@@ -298,7 +325,9 @@ test:
     timeout: "10s"
   scenarios:
     - name: "Imported Scenario"
-      steps: []`}</div>
+      steps: []`
+            }
+          </div>
         </div>
 
         <div class='reference-section'>

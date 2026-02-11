@@ -1,9 +1,9 @@
-import { convertContent } from './helpers/conversion.js';
-import { getFileExtension, isSupportedInputExtension, buildSuggestedFileName } from './helpers/file.js';
-import { createToastNotifier } from './helpers/toast.js';
-import { validateYaml, displayValidation } from './helpers/validation.js';
 import hljs from 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/highlight.min.js';
 import yaml from 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/languages/yaml.min.js';
+import { convertContent } from './helpers/conversion.js';
+import { buildSuggestedFileName, getFileExtension, isSupportedInputExtension } from './helpers/file.js';
+import { createToastNotifier } from './helpers/toast.js';
+import { displayValidation, validateYaml } from './helpers/validation.js';
 
 hljs.registerLanguage( 'yaml', yaml );
 
@@ -17,6 +17,7 @@ const yamlOutput = document.getElementById( 'yamlOutput' );
 const yamlCode = document.getElementById( 'yamlCode' );
 const downloadBtn = document.getElementById( 'downloadBtn' );
 const copyBtn = document.getElementById( 'copyBtn' );
+const clearBtn = document.getElementById( 'clearBtn' );
 const toast = document.getElementById( 'toast' );
 const toastMessage = document.getElementById( 'toastMessage' );
 const validationSection = document.getElementById( 'validationSection' );
@@ -47,6 +48,7 @@ function handleFile( file ) {
   setYamlOutput( '' );
   downloadBtn.disabled = true;
   copyBtn.disabled = true;
+  clearBtn.disabled = true;
   convertedYaml = null;
   validationSection.style.display = 'none';
 }
@@ -73,6 +75,7 @@ async function convertFile() {
     setYamlOutput( convertedYaml );
     downloadBtn.disabled = false;
     copyBtn.disabled = false;
+    clearBtn.disabled = false;
 
     const validation = validateYaml( convertedYaml );
     displayValidation( validation, validationSection, validationResults );
@@ -82,6 +85,7 @@ async function convertFile() {
     setYamlOutput( `# Conversion error\n# ${ err.message || err }` );
     downloadBtn.disabled = true;
     copyBtn.disabled = true;
+    clearBtn.disabled = true;
     showToast( 'Could not convert the file', 'error' );
   }
 }
@@ -154,3 +158,11 @@ removeFile.addEventListener( 'click', ( event ) => {
 convertBtn.addEventListener( 'click', convertFile );
 downloadBtn.addEventListener( 'click', downloadYaml );
 copyBtn.addEventListener( 'click', copyToClipboard );
+clearBtn.addEventListener( 'click', () => {
+  convertedYaml = null;
+  setYamlOutput( '' );
+  downloadBtn.disabled = true;
+  copyBtn.disabled = true;
+  clearBtn.disabled = true;
+  validationSection.style.display = 'none';
+} );
