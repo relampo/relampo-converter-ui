@@ -19,6 +19,10 @@
       rel='stylesheet'
       href='/assets/app.css'
     />
+    <link
+      rel='stylesheet'
+      href='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css'
+    />
   </head>
   <body>
     <header>
@@ -199,11 +203,14 @@
           YAML Output
         </h2>
 
-        <textarea
+        <pre
           class='yaml-output empty'
           id='yamlOutput'
-          placeholder='Your converted YAML will appear here...'
-        ></textarea>
+          data-placeholder='Your converted YAML will appear here...'
+        ><code
+            class='hljs language-yaml'
+            id='yamlCode'
+          ></code></pre>
 
         <div class='download-actions'>
           <button

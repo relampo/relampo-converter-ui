@@ -270,20 +270,32 @@ header {
   font-family: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   line-height: 1.6;
-  color: var(--text-secondary);
   overflow: auto;
   white-space: pre;
   word-break: normal;
-  resize: none;
   width: 100%;
+  margin: 0;
 }
 
 .yaml-output.empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  position: relative;
+}
+
+.yaml-output.empty::before {
+  content: attr(data-placeholder);
   color: #71717a;
   font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  position: absolute;
+  top: 16px;
+  left: 16px;
+}
+
+.yaml-output code {
+  color: var(--text-secondary);
+}
+
+.yaml-output.empty code {
+  visibility: hidden;
 }
 
 .validation-section {

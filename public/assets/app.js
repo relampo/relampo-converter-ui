@@ -2,6 +2,10 @@ import { convertContent } from './helpers/conversion.js';
 import { getFileExtension, isSupportedInputExtension, buildSuggestedFileName } from './helpers/file.js';
 import { createToastNotifier } from './helpers/toast.js';
 import { validateYaml, displayValidation } from './helpers/validation.js';
+import hljs from 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/highlight.min.js';
+import yaml from 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/languages/yaml.min.js';
+
+hljs.registerLanguage( 'yaml', yaml );
 
 const uploadZone = document.getElementById( 'uploadZone' );
 const fileInput = document.getElementById( 'fileInput' );
@@ -10,6 +14,7 @@ const fileName = document.getElementById( 'fileName' );
 const removeFile = document.getElementById( 'removeFile' );
 const convertBtn = document.getElementById( 'convertBtn' );
 const yamlOutput = document.getElementById( 'yamlOutput' );
+const yamlCode = document.getElementById( 'yamlCode' );
 const downloadBtn = document.getElementById( 'downloadBtn' );
 const copyBtn = document.getElementById( 'copyBtn' );
 const toast = document.getElementById( 'toast' );
@@ -39,9 +44,7 @@ function handleFile( file ) {
   uploadZone.classList.add( 'has-file' );
   convertBtn.disabled = false;
 
-  yamlOutput.value = '';
-  yamlOutput.classList.add( 'empty' );
-  yamlOutput.placeholder = 'Your converted YAML will appear here...';
+  setYamlOutput( '' );
   downloadBtn.disabled = true;
   copyBtn.disabled = true;
   convertedYaml = null;
@@ -67,8 +70,7 @@ async function convertFile() {
     convertedYaml = convertContent( fileText, extension );
     suggestedFileName = buildSuggestedFileName( selectedFile.name );
 
-    yamlOutput.value = convertedYaml;
-    yamlOutput.classList.remove( 'empty' );
+    setYamlOutput( convertedYaml );
     downloadBtn.disabled = false;
     copyBtn.disabled = false;
 
@@ -76,8 +78,10 @@ async function convertFile() {
     displayValidation( validation, validationSection, validationResults );
     showToast( `${ extension.toUpperCase() } → YAML conversion completed` );
   } catch ( err ) {
-    yamlOutput.value = `# Conversion error\n# ${ err.message || err }`;
-    yamlOutput.classList.remove( 'empty' );
+    convertedYaml = null;
+    setYamlOutput( `# Conversion error\n# ${ err.message || err }` );
+    downloadBtn.disabled = true;
+    copyBtn.disabled = true;
     showToast( 'Could not convert the file', 'error' );
   }
 }
@@ -112,6 +116,18 @@ async function copyToClipboard() {
   }
 }
 
+function setYamlOutput( content ) {
+  yamlOutput.classList.toggle( 'empty', !content );
+
+  if ( !content ) {
+    yamlCode.textContent = '';
+    return;
+  }
+
+  const highlighted = hljs.highlight( content, { language: 'yaml' } );
+  yamlCode.innerHTML = highlighted.value;
+}
+
 uploadZone.addEventListener( 'click', () => fileInput.click() );
 uploadZone.addEventListener( 'dragover', ( event ) => {
   event.preventDefault();
@@ -138,11 +154,3 @@ removeFile.addEventListener( 'click', ( event ) => {
 convertBtn.addEventListener( 'click', convertFile );
 downloadBtn.addEventListener( 'click', downloadYaml );
 copyBtn.addEventListener( 'click', copyToClipboard );
-
-yamlOutput.addEventListener( 'input', () => {
-  if ( !yamlOutput.value ) {
-    return;
-  }
-  convertedYaml = yamlOutput.value;
-  displayValidation( validateYaml( yamlOutput.value ), validationSection, validationResults );
-} );
