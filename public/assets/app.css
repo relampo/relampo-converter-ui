@@ -517,21 +517,21 @@ header {
   border-color: var(--accent-gold);
 }
 
-/* Actualizar color de labels según el toggle */
-.lang-toggle .lang-label:first-child {
+/* Highlight language labels based on the active document language */
+html[lang='en'] .lang-toggle .lang-label.lang-en {
   color: var(--accent-gold);
 }
 
-#langToggle:checked ~ .lang-label:first-child {
+html[lang='en'] .lang-toggle .lang-label.lang-es {
   color: var(--text-secondary);
 }
 
-#langToggle:checked ~ .lang-label:last-child {
+html[lang='es'] .lang-toggle .lang-label.lang-en {
+  color: var(--text-secondary);
+}
+
+html[lang='es'] .lang-toggle .lang-label.lang-es {
   color: var(--accent-gold);
-}
-
-.lang-toggle .lang-label:last-child {
-  color: var(--text-secondary);
 }
 
 /* Search Bar */

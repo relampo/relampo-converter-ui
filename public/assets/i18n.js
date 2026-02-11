@@ -112,7 +112,11 @@ export function setLanguage(lang) {
 
 // Función para obtener idioma actual
 export function getCurrentLanguage() {
-  return localStorage.getItem('relampo-lang') || 'en';
+  const stored = localStorage.getItem('relampo-lang');
+  if (stored && Object.prototype.hasOwnProperty.call(translations, stored)) {
+    return stored;
+  }
+  return 'en';
 }
 
 // Función para actualizar la UI con las traducciones
@@ -165,8 +169,9 @@ function updateUI(lang) {
 // Inicializar idioma al cargar
 export function initI18n() {
   const currentLang = getCurrentLanguage();
+  document.documentElement.lang = currentLang;
   updateUI(currentLang);
-  
+
   // Actualizar el toggle si existe
   const langToggle = document.getElementById('langToggle');
   if (langToggle) {
