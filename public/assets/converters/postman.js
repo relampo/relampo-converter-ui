@@ -96,12 +96,17 @@ function parseExtract(events = []) {
   return Object.keys(extracts).length > 0 ? extracts : null;
 }
 
-function mapRequestItemToStep(item) {
+function mapRequestItemToStep(item, context = {}) {
   const request = item.request ?? {};
   const mappedRequest = {
     method: request.method || 'GET',
     url: normalizeURL(getRequestURL(request))
   };
+
+  // Add request name if present
+  if (item.name) {
+    mappedRequest.name = item.name;
+  }
 
   const headers = {};
   for (const header of request.header ?? []) {
@@ -122,12 +127,44 @@ function mapRequestItemToStep(item) {
   const extract = parseExtract(item.event ?? []);
   if (extract) {
     mappedRequest.extract = extract;
+    if (context.stats) {
+      context.stats.extractors += Object.keys(extract).length;
+    }
+  }
+  
+  // Track unsupported features by category
+  if (context.stats) {
+    // Auth not supported
+    if (request.auth && request.auth.type && request.auth.type !== 'noauth') {
+      context.stats.requestsWithAuth = (context.stats.requestsWithAuth || 0) + 1;
+    }
+    
+    // Pre-request scripts not supported
+    if (item.event && item.event.some(e => e.listen === 'prerequest' && e.script?.exec?.length > 0)) {
+      context.stats.requestsWithPreScripts = (context.stats.requestsWithPreScripts || 0) + 1;
+    }
+    
+    // Complex test scripts
+    if (item.event && item.event.some(e => e.listen === 'test' && e.script?.exec?.length > 0)) {
+      const testScript = item.event.find(e => e.listen === 'test');
+      const hasNonExtractLogic = testScript.script.exec.some(line => 
+        !line.match(EXTRACT_REGEX) && line.trim().length > 0 && !line.trim().startsWith('//')
+      );
+      if (hasNonExtractLogic) {
+        context.stats.requestsWithComplexTests = (context.stats.requestsWithComplexTests || 0) + 1;
+      }
+    }
+  }
+  
+  // Count this request
+  if (context.stats) {
+    context.stats.requests++;
   }
 
   return { request: mappedRequest };
 }
 
-function mapItemsToSteps(items = []) {
+function mapItemsToSteps(items = [], context = {}) {
   const steps = [];
 
   for (const item of items) {
@@ -135,14 +172,17 @@ function mapItemsToSteps(items = []) {
       steps.push({
         group: {
           name: item.name || 'Folder',
-          steps: mapItemsToSteps(item.item)
+          steps: mapItemsToSteps(item.item, context)
         }
       });
+      if (context.stats) {
+        context.stats.folders++;
+      }
       continue;
     }
 
     if (item?.request) {
-      steps.push(mapRequestItemToStep(item));
+      steps.push(mapRequestItemToStep(item, context));
     }
   }
 
@@ -185,6 +225,30 @@ export function convertPostmanJSONToPulseYAML(postmanText, customOptions = {}) {
   }
 
   const options = { ...DEFAULT_OPTIONS, ...customOptions };
+  
+  // Create context to track statistics
+  const context = {
+    stats: {
+      requests: 0,
+      extractors: 0,
+      folders: 0,
+      requestsWithAuth: 0,
+      requestsWithPreScripts: 0,
+      requestsWithComplexTests: 0,
+      hasCollectionAuth: false,
+      hasCollectionVariables: false
+    }
+  };
+  
+  // Check for collection-level auth
+  if (collection?.auth && collection.auth.type && collection.auth.type !== 'noauth') {
+    context.stats.hasCollectionAuth = true;
+  }
+  
+  // Check for collection-level variables
+  if (collection?.variable && collection.variable.length > 0) {
+    context.stats.hasCollectionVariables = true;
+  }
 
   const apiScenarioManager = {
     test: {
@@ -209,7 +273,7 @@ export function convertPostmanJSONToPulseYAML(postmanText, customOptions = {}) {
           ramp_up: options.defaultRampUp
         },
         cookies: 'auto',
-        steps: mapItemsToSteps(collection?.item ?? [])
+        steps: mapItemsToSteps(collection?.item ?? [], context)
       }
     ],
     metrics: {
@@ -223,5 +287,52 @@ export function convertPostmanJSONToPulseYAML(postmanText, customOptions = {}) {
     apiScenarioManager.http_defaults.base_url = baseURL;
   }
 
-  return stringifyYAML(apiScenarioManager);
+  // Generate YAML with header and stats
+  const yaml = stringifyYAML(apiScenarioManager);
+  const now = new Date();
+  const timestamp = now.toISOString().replace('T', ' ').substring(0, 19);
+  
+  let header = `# ============================================================================
+# RELAMPO YAML - CONVERTED FROM POSTMAN COLLECTION
+# ============================================================================
+# Conversion Date: ${timestamp}
+# Collection: ${collection?.info?.name || 'Unnamed'}
+#
+# CONVERSION STATS:
+# - HTTP Requests: ${context.stats.requests}
+# - Folders/Groups: ${context.stats.folders}
+# - Extractors: ${context.stats.extractors}
+`;
+
+  // Add limitations summary (categorized)
+  const limitations = [];
+  if (context.stats.hasCollectionAuth) {
+    limitations.push('Collection-level authentication not supported');
+  }
+  if (context.stats.hasCollectionVariables) {
+    limitations.push('Collection variables not auto-converted');
+  }
+  if (context.stats.requestsWithAuth > 0) {
+    limitations.push(`Authentication for ${context.stats.requestsWithAuth} request${context.stats.requestsWithAuth > 1 ? 's' : ''}`);
+  }
+  if (context.stats.requestsWithPreScripts > 0) {
+    limitations.push(`Pre-request scripts for ${context.stats.requestsWithPreScripts} request${context.stats.requestsWithPreScripts > 1 ? 's' : ''}`);
+  }
+  if (context.stats.requestsWithComplexTests > 0) {
+    limitations.push(`Test scripts for ${context.stats.requestsWithComplexTests} request${context.stats.requestsWithComplexTests > 1 ? 's' : ''}`);
+  }
+  
+  if (limitations.length > 0) {
+    header += `#
+# LIMITATIONS (not converted):
+`;
+    for (const limitation of limitations) {
+      header += `# - ${limitation}
+`;
+    }
+  }
+  
+  header += `# ============================================================================\n`;
+
+  return header + yaml;
 }
