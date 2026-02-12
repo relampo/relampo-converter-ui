@@ -1047,6 +1047,15 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
 
     // Handle If Controller
     if (tag === 'IfController') {
+      // Warn about pending assertions before if controller (not supported)
+      if (pendingAssertions.length > 0) {
+        const warningMsg = `ResponseAssertion before If Controller - Controller-scoped assertions not supported in Relampo`;
+        if (!context.warnings.includes(warningMsg)) {
+          context.warnings.push(warningMsg);
+        }
+        pendingAssertions = [];
+      }
+      
       const condition = getStringProp(pair.element, 'IfController.condition');
       const convertedCondition = convertIfCondition(condition);
       const nestedSteps = parseStepsFromHashTree(pair.hashTree, localDefaults, context);
@@ -1062,6 +1071,17 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
 
     // Handle Loop Controller
     if (tag === 'LoopController') {
+      // Warn about pending assertions before loop controller (not supported)
+      if (pendingAssertions.length > 0) {
+        for (const assertion of pendingAssertions) {
+          const warningMsg = `ResponseAssertion before Loop Controller - Controller-scoped assertions not supported in Relampo`;
+          if (!context.warnings.includes(warningMsg)) {
+            context.warnings.push(warningMsg);
+          }
+        }
+        pendingAssertions = [];
+      }
+      
       const loops = getStringProp(pair.element, 'LoopController.loops');
       const loopCount = parseInt(loops) || 1;
       const nestedSteps = parseStepsFromHashTree(pair.hashTree, localDefaults, context);
@@ -1083,6 +1103,15 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
     }
 
     if (CONTROLLER_TAGS.has(tag)) {
+      // Warn about pending assertions before group controller (not supported)
+      if (pendingAssertions.length > 0) {
+        const warningMsg = `ResponseAssertion before Group Controller - Controller-scoped assertions not supported in Relampo`;
+        if (!context.warnings.includes(warningMsg)) {
+          context.warnings.push(warningMsg);
+        }
+        pendingAssertions = [];
+      }
+      
       const groupName = getElementName(pair.element, tag);
       const nestedSteps = parseStepsFromHashTree(pair.hashTree, localDefaults, context);
       if (nestedSteps.length > 0) {
