@@ -305,16 +305,19 @@ function parseExtractors(hashTreeNode, context) {
         const jsonPath = getStringProp(child, 'JSONPostProcessor.jsonPathExprs');
         const defaultValue = getStringProp(child, 'JSONPostProcessor.defaultValues');
         
-        // Include even if empty
-        let expression = jsonPath ? `jsonpath("${jsonPath}")` : 'jsonpath("INCOMPLETE")';
-        if (defaultValue) {
-          expression += ` || "${defaultValue}"`;
-        }
-        extractors.push({
-          name: elementName,
+        if (!jsonPath) continue; // Skip if no path
+        
+        const extractor = {
+          type: 'jsonpath',
           var: refName || 'INCOMPLETE',
-          expression: expression
-        });
+          path: jsonPath
+        };
+        
+        if (defaultValue) {
+          extractor.default = defaultValue;
+        }
+        
+        extractors.push(extractor);
       }
 
       // Regex Extractor
@@ -322,18 +325,28 @@ function parseExtractors(hashTreeNode, context) {
         const refName = getStringProp(child, 'RegexExtractor.refname');
         const regex = getStringProp(child, 'RegexExtractor.regex');
         const defaultValue = getStringProp(child, 'RegexExtractor.default');
+        const template = getStringProp(child, 'RegexExtractor.template');
+        const matchNo = getStringProp(child, 'RegexExtractor.match_number');
         
-        // Include even if empty
-        const escapedRegex = regex ? regex.replace(/\\/g, '\\\\') : 'INCOMPLETE';
-        let expression = `regex("${escapedRegex}")`;
-        if (defaultValue) {
-          expression += ` || "${defaultValue}"`;
-        }
-        extractors.push({
-          name: elementName,
+        if (!regex) continue; // Skip if no pattern
+        
+        const extractor = {
+          type: 'regex',
           var: refName || 'INCOMPLETE',
-          expression: expression
-        });
+          pattern: regex
+        };
+        
+        if (defaultValue) {
+          extractor.default = defaultValue;
+        }
+        if (matchNo && matchNo !== '1' && matchNo !== '0') {
+          extractor.match_no = matchNo;
+        }
+        if (template && template !== '$1$' && template !== '') {
+          extractor.template = template;
+        }
+        
+        extractors.push(extractor);
       }
 
       // XPath Extractor
@@ -342,16 +355,19 @@ function parseExtractors(hashTreeNode, context) {
         const xpathQuery = getStringProp(child, 'XPathExtractor.xpathQuery');
         const defaultValue = getStringProp(child, 'XPathExtractor.default');
         
-        // Include even if empty
-        let expression = xpathQuery ? `xpath("${xpathQuery}")` : 'xpath("INCOMPLETE")';
-        if (defaultValue) {
-          expression += ` || "${defaultValue}"`;
-        }
-        extractors.push({
-          name: elementName,
+        if (!xpathQuery) continue; // Skip if no path
+        
+        const extractor = {
+          type: 'xpath',
           var: refName || 'INCOMPLETE',
-          expression: expression
-        });
+          path: xpathQuery
+        };
+        
+        if (defaultValue) {
+          extractor.default = defaultValue;
+        }
+        
+        extractors.push(extractor);
       }
       
       // Unsupported extractors - add to warnings
@@ -380,6 +396,7 @@ function parseAssertions(hashTreeNode, context) {
   if (!hashTreeNode) return null;
   
   const assertions = [];
+  const sparkScripts = [];
   
   // Recursively search for assertions
   function findAssertions(node) {
@@ -394,7 +411,11 @@ function parseAssertions(hashTreeNode, context) {
         const testField = getStringProp(child, 'Assertion.test_field');
         const testType = getStringProp(child, 'Assertion.test_type');
         
-        const testStrings = findDirectChild(child, 'collectionProp', 'name', 'Asserion.test_strings');
+        // Try both spellings (JMeter has a typo "Asserion" in some versions)
+        let testStrings = findDirectChild(child, 'collectionProp', 'name', 'Asserion.test_strings');
+        if (!testStrings) {
+          testStrings = findDirectChild(child, 'collectionProp', 'name', 'Assertion.test_strings');
+        }
         
         const strings = [];
         if (testStrings) {
@@ -405,29 +426,60 @@ function parseAssertions(hashTreeNode, context) {
           }
         }
         
-        const value = strings.length > 0 ? strings[0] : 'INCOMPLETE';
+        const value = strings.length > 0 ? strings[0] : '';
+        if (!value) continue; // Skip empty assertions
 
-        // Map test fields and types - include even if empty
+        // Map test fields and types based on JMeter specification
+        // testType: 1=contains, 2=equals, 8=matches(regex), 16=not contains
         if (testField === 'Assertion.response_code' || !testField) {
+          // Status code assertion
           assertions.push({
-            name: elementName,
             type: 'status',
-            value: value !== 'INCOMPLETE' ? (parseInt(value) || value) : 'INCOMPLETE'
+            value: parseInt(value) || value
           });
-        } else if (testField === 'Assertion.response_data') {
-          if (testType === '16' || !testType) { // contains
+        } else if (testField === 'Assertion.response_data' || testField === '') {
+          // Response body assertions
+          if (testType === '1') { // Contains
             assertions.push({
-              name: elementName,
-              type: 'body_contains',
+              type: 'contains',
               value: value
             });
-          } else if (testType === '2') { // matches
+          } else if (testType === '16') { // Not contains
             assertions.push({
-              name: elementName,
-              type: 'body_matches',
+              type: 'not_contains',
+              value: value
+            });
+          } else if (testType === '8') { // Matches (regex)
+            assertions.push({
+              type: 'regex',
+              pattern: value
+            });
+          } else if (testType === '2') { // Equals
+            assertions.push({
+              type: 'contains', // Map equals to contains for simplicity
               value: value
             });
           }
+        }
+      }
+      
+      // JSR223Assertion - convert to spark script
+      else if (tag === 'JSR223Assertion') {
+        const script = getStringProp(child, 'script');
+        const scriptLanguage = getStringProp(child, 'scriptLanguage');
+        
+        if (script) {
+          let convertedScript = script;
+          // Convert Groovy to JavaScript if needed
+          if (scriptLanguage === 'groovy' || !scriptLanguage) {
+            convertedScript = convertGroovyToJavaScript(script);
+          }
+          
+          sparkScripts.push({
+            name: elementName || 'JSR223 Assertion',
+            when: 'after',
+            script: convertedScript
+          });
         }
       }
 
@@ -460,7 +512,7 @@ function parseAssertions(hashTreeNode, context) {
       // Unsupported assertions - skip but don't add, add to warnings
       else if (tag === 'SizeAssertion' || tag === 'XMLSchemaAssertion' || tag === 'HTMLAssertion' || 
                tag === 'MD5HexAssertion' || tag === 'XPathAssertion' || tag === 'XPath2Assertion' ||
-               tag === 'CompareAssertion' || tag === 'BeanShellAssertion' || tag === 'JSR223Assertion' ||
+               tag === 'CompareAssertion' || tag === 'BeanShellAssertion' ||
                tag === 'SMIMEAssertion') {
         // These assertion types are not supported in Relampo
         if (context && context.warnings) {
@@ -479,7 +531,11 @@ function parseAssertions(hashTreeNode, context) {
   
   findAssertions(hashTreeNode);
   
-  return assertions.length > 0 ? assertions : null;
+  // Return both assertions and spark scripts
+  return {
+    assertions: assertions.length > 0 ? assertions : null,
+    sparkScripts: sparkScripts.length > 0 ? sparkScripts : null
+  };
 }
 
 function convertGroovyToJavaScript(groovyCode) {
@@ -514,9 +570,25 @@ function convertGroovyToJavaScript(groovyCode) {
   // Convert Base64 encoding
   jsCode = jsCode.replace(/Base64\.getEncoder\(\)\.encode\([^)]+\.getBytes\(\)\)/g, 'btoa(credentials)');
   jsCode = jsCode.replace(/Base64\.getDecoder\(\)\.decode\(/g, 'atob(');
+  jsCode = jsCode.replace(/Base64\.encodeBase64String\(([^)]+)\.getBytes\([^)]*\)\)/g, 'btoa($1)');
   
   // Convert variable declarations: def → var/let/const
   jsCode = jsCode.replace(/\bdef\s+/g, 'var ');
+  
+  // Convert Groovy regex operations
+  // (text =~ /pattern/) → text.match(/pattern/)
+  jsCode = jsCode.replace(/\(([^)]+)\s*=~\s*\/([^\/]+)\/([gim]*)\)/g, '$1.match(/$2/$3)');
+  jsCode = jsCode.replace(/([a-zA-Z_][a-zA-Z0-9_.]*)\s*=~\s*\/([^\/]+)\/([gim]*)/g, '$1.match(/$2/$3)');
+  
+  // m.group(n) → m[n]
+  jsCode = jsCode.replace(/\.group\((\d+)\)/g, '[$1]');
+  
+  // m.find() → m !== null
+  jsCode = jsCode.replace(/\.find\(\)/g, ' !== null');
+  
+  // AssertionResult patterns for JSR223Assertion
+  jsCode = jsCode.replace(/AssertionResult\.setFailureMessage\(([^)]+)\)/g, 'throw new Error($1)');
+  jsCode = jsCode.replace(/AssertionResult\.setFailure\(true\)/g, 'throw new Error("Assertion failed")');
   
   // Convert System.currentTimeMillis() → Date.now()
   jsCode = jsCode.replace(/System\.currentTimeMillis\(\)/g, 'Date.now()');
@@ -711,15 +783,22 @@ function convertSamplerToStep(sampler, samplerHashTree, context = {}) {
   // Add extractors
   const extractors = parseExtractors(samplerHashTree, context);
   if (extractors) {
-    request.extract = extractors;
+    request.extractors = extractors;
     if (context.stats) context.stats.extractors += extractors.length;
   }
 
-  // Add assertions
-  const assertions = parseAssertions(samplerHashTree, context);
-  if (assertions) {
-    request.assert = assertions;
-    if (context.stats) context.stats.assertions += assertions.length;
+  // Add assertions and JSR223Assertion spark scripts
+  const assertionResult = parseAssertions(samplerHashTree, context);
+  if (assertionResult) {
+    if (assertionResult.assertions) {
+      request.assertions = assertionResult.assertions;
+      if (context.stats) context.stats.assertions += assertionResult.assertions.length;
+    }
+    // Add JSR223Assertion spark scripts
+    if (assertionResult.sparkScripts) {
+      allSparkScripts.push(...assertionResult.sparkScripts);
+      if (context.stats) context.stats.sparkScripts += assertionResult.sparkScripts.length;
+    }
   }
 
   // Count this request
@@ -767,7 +846,18 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
       continue;
     }
 
-    if (tag === 'HeaderManager' || tag === 'CookieManager' || tag === 'CacheManager') {
+    if (tag === 'HeaderManager' || tag === 'CacheManager') {
+      continue;
+    }
+    
+    // Parse CookieManager
+    if (tag === 'CookieManager') {
+      const clearEachIteration = getBoolProp(pair.element, 'CookieManager.clearEachIteration');
+      if (!context.cookieManager) {
+        context.cookieManager = {
+          clearEachIteration: clearEachIteration
+        };
+      }
       continue;
     }
     
@@ -877,9 +967,9 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
       const stepData = convertSamplerToStep(pair.element, pair.hashTree, context);
       const enabled = pair.element.getAttribute('enabled');
       
-      // Mark disabled requests with a comment
+      // Mark disabled requests
       if (enabled === 'false') {
-        stepData.request['# DISABLED IN JMETER'] = true;
+        stepData.request.enabled = false;
       }
       
       steps.push(stepData);
@@ -986,7 +1076,6 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
       'XPath2Assertion',
       'CompareAssertion',
       'BeanShellAssertion',
-      'JSR223Assertion',
       'SMIMEAssertion',
       // Unsupported Timers
       'JSR223Timer',
@@ -1163,6 +1252,14 @@ export function convertJMXToPulseYAML(jmxText, customOptions = {}) {
     pulse.http_defaults.base_url = detectedBaseURL;
   }
 
+  // Determine cookies configuration from CookieManager
+  let cookiesConfig = 'auto';
+  if (context.cookieManager) {
+    if (context.cookieManager.clearEachIteration) {
+      cookiesConfig = 'none'; // Clear each iteration means don't keep cookies
+    }
+  }
+  
   pulse.scenarios = [
     {
       name: 'Imported Scenario',
@@ -1171,7 +1268,7 @@ export function convertJMXToPulseYAML(jmxText, customOptions = {}) {
         duration: options.defaultDuration,
         ramp_up: options.defaultRampUp
       },
-      cookies: 'auto',
+      cookies: cookiesConfig,
       steps
     }
   ];
