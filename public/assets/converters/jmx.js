@@ -801,9 +801,6 @@ function convertSamplerToStep(sampler, samplerHashTree, context = {}) {
     }
   }
 
-  // Count this request
-  if (context.stats) context.stats.requests++;
-
   return { request };
 }
 
@@ -820,6 +817,10 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
   if (!context.warnings) {
     context.warnings = [];
   }
+  
+  // Track pending assertions/timers to attach to next request
+  let pendingAssertions = [];
+  let pendingTimers = [];
 
   for (const pair of getHashTreePairs(hashTreeNode)) {
     const tag = pair.element.tagName;
@@ -896,20 +897,60 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
       continue;
     }
 
-    // Handle timers
+    // Handle ResponseAssertion - store to attach to next request
+    if (tag === 'ResponseAssertion') {
+      const testField = getStringProp(pair.element, 'Assertion.test_field');
+      const testType = getStringProp(pair.element, 'Assertion.test_type');
+      
+      let testStrings = findDirectChild(pair.element, 'collectionProp', 'name', 'Asserion.test_strings');
+      if (!testStrings) {
+        testStrings = findDirectChild(pair.element, 'collectionProp', 'name', 'Assertion.test_strings');
+      }
+      
+      const strings = [];
+      if (testStrings) {
+        for (const stringChild of elementChildren(testStrings)) {
+          if (stringChild.tagName === 'stringProp') {
+            strings.push(stringChild.textContent?.trim() || '');
+          }
+        }
+      }
+      
+      const value = strings.length > 0 ? strings[0] : '';
+      if (value) {
+        if (testField === 'Assertion.response_code' || !testField) {
+          pendingAssertions.push({
+            type: 'status',
+            value: parseInt(value) || value
+          });
+        } else if (testField === 'Assertion.response_data' || testField === '') {
+          if (testType === '1') {
+            pendingAssertions.push({ type: 'contains', value: value });
+          } else if (testType === '16') {
+            pendingAssertions.push({ type: 'not_contains', value: value });
+          } else if (testType === '8') {
+            pendingAssertions.push({ type: 'regex', pattern: value });
+          } else if (testType === '2') {
+            pendingAssertions.push({ type: 'contains', value: value });
+          }
+        }
+      }
+      continue;
+    }
+
+    // Handle timers - store to attach to next request
     if (tag === 'ConstantTimer') {
       const delay = getStringProp(pair.element, 'ConstantTimer.delay');
       if (delay) {
         const delayMs = parseInt(delay);
         if (delayMs > 0) {
           const seconds = Math.ceil(delayMs / 1000);
-          steps.push({ 
+          pendingTimers.push({ 
             think_time: {
               name: elementName,
               duration: `${seconds}s`
             }
           });
-          if (context.stats) context.stats.timers++;
         }
       }
       continue;
@@ -964,11 +1005,28 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
     }
 
     if (tag === 'HTTPSamplerProxy') {
+      // Add pending timers before the request
+      if (pendingTimers.length > 0) {
+        steps.push(...pendingTimers);
+        if (context.stats) context.stats.timers += pendingTimers.length;
+        pendingTimers = [];
+      }
+      
+      // Add pending assertions before the request (will be shown as standalone)
+      if (pendingAssertions.length > 0) {
+        steps.push({ assertions: pendingAssertions });
+        if (context.stats) context.stats.assertions += pendingAssertions.length;
+        pendingAssertions = [];
+      }
+      
       const stepData = convertSamplerToStep(pair.element, pair.hashTree, context);
       const enabled = pair.element.getAttribute('enabled');
       
-      // Mark disabled requests
-      if (enabled === 'false') {
+      // Count only enabled requests
+      if (enabled !== 'false') {
+        if (context.stats) context.stats.requests++;
+      } else {
+        // Mark disabled requests
         stepData.request.enabled = false;
       }
       
