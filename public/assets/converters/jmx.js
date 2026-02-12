@@ -899,6 +899,9 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
 
     // Handle ResponseAssertion - store to attach to next request
     if (tag === 'ResponseAssertion') {
+      const enabled = pair.element.getAttribute('enabled');
+      const isEnabled = enabled !== 'false'; // If no attribute, default is true
+      
       const testField = getStringProp(pair.element, 'Assertion.test_field');
       const testType = getStringProp(pair.element, 'Assertion.test_type');
       
@@ -918,21 +921,29 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
       
       const value = strings.length > 0 ? strings[0] : '';
       if (value) {
+        let assertion = null;
         if (testField === 'Assertion.response_code' || !testField) {
-          pendingAssertions.push({
+          assertion = {
             type: 'status',
             value: parseInt(value) || value
-          });
+          };
         } else if (testField === 'Assertion.response_data' || testField === '') {
           if (testType === '1') {
-            pendingAssertions.push({ type: 'contains', value: value });
+            assertion = { type: 'contains', value: value };
           } else if (testType === '16') {
-            pendingAssertions.push({ type: 'not_contains', value: value });
+            assertion = { type: 'not_contains', value: value };
           } else if (testType === '8') {
-            pendingAssertions.push({ type: 'regex', pattern: value });
+            assertion = { type: 'regex', pattern: value };
           } else if (testType === '2') {
-            pendingAssertions.push({ type: 'contains', value: value });
+            assertion = { type: 'contains', value: value };
           }
+        }
+        
+        if (assertion) {
+          if (!isEnabled) {
+            assertion.enabled = false;
+          }
+          pendingAssertions.push(assertion);
         }
       }
       continue;
@@ -1022,11 +1033,11 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
       const stepData = convertSamplerToStep(pair.element, pair.hashTree, context);
       const enabled = pair.element.getAttribute('enabled');
       
-      // Count only enabled requests
-      if (enabled !== 'false') {
-        if (context.stats) context.stats.requests++;
-      } else {
-        // Mark disabled requests
+      // Count all requests (enabled and disabled)
+      if (context.stats) context.stats.requests++;
+      
+      // Mark disabled requests
+      if (enabled === 'false') {
         stepData.request.enabled = false;
       }
       
