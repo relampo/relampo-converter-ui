@@ -18,7 +18,6 @@ export const translations = {
     outputPlaceholder: "Your converted YAML will appear here...",
     downloadButton: "Download YAML",
     copyButton: "Copy",
-    clearButton: "Clear",
     
     // Reference Panel
     referenceTitle: "Reference",
@@ -69,7 +68,6 @@ export const translations = {
     outputPlaceholder: "Tu YAML convertido aparecerá aquí...",
     downloadButton: "Descargar YAML",
     copyButton: "Copiar",
-    clearButton: "Limpiar",
     
     // Panel de Referencia
     referenceTitle: "Referencia",
