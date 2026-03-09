@@ -397,6 +397,11 @@ header {
   color: var(--error);
 }
 
+.reference-list.error-list li::before {
+  content: "•";
+  color: var(--error);
+}
+
 #fileInput {
   display: none;
 }
