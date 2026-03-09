@@ -18,7 +18,6 @@ const yamlOutput = document.getElementById( 'yamlOutput' );
 const yamlCode = document.getElementById( 'yamlCode' );
 const downloadBtn = document.getElementById( 'downloadBtn' );
 const copyBtn = document.getElementById( 'copyBtn' );
-const clearBtn = document.getElementById( 'clearBtn' );
 const searchBtn = document.getElementById( 'searchBtn' );
 const toast = document.getElementById( 'toast' );
 const toastMessage = document.getElementById( 'toastMessage' );
@@ -125,7 +124,6 @@ function handleFile( file ) {
   setYamlOutput( '' );
   downloadBtn.disabled = true;
   copyBtn.disabled = true;
-  clearBtn.disabled = true;
   convertedYaml = null;
   validationSection.style.display = 'none';
   clearErrorMessages();
@@ -142,7 +140,6 @@ function clearFile() {
   setYamlOutput( '' );
   downloadBtn.disabled = true;
   copyBtn.disabled = true;
-  clearBtn.disabled = true;
   searchBtn.disabled = true;
   validationSection.style.display = 'none';
   hideSearchBar();
@@ -169,7 +166,6 @@ async function convertFile() {
     setYamlOutput( convertedYaml );
     downloadBtn.disabled = false;
     copyBtn.disabled = false;
-    clearBtn.disabled = false;
     searchBtn.disabled = false;
 
     const validation = validateYaml( convertedYaml );
@@ -185,7 +181,6 @@ async function convertFile() {
     setYamlOutput( `# Conversion error\n# ${ err.message || err }` );
     downloadBtn.disabled = true;
     copyBtn.disabled = true;
-    clearBtn.disabled = true;
     searchBtn.disabled = true;
     analyzeConversionSummary( null );
     showErrorMessages( buildConversionErrorMessages( extension, fileText, err ) );
@@ -412,20 +407,6 @@ convertBtn.addEventListener( 'click', convertFile );
 downloadBtn.addEventListener( 'click', downloadYaml );
 copyBtn.addEventListener( 'click', copyToClipboard );
 searchBtn.addEventListener( 'click', showSearchBar );
-clearBtn.addEventListener( 'click', () => {
-  convertedYaml = null;
-  setYamlOutput( '' );
-  downloadBtn.disabled = true;
-  copyBtn.disabled = true;
-  clearBtn.disabled = true;
-  searchBtn.disabled = true;
-  validationSection.style.display = 'none';
-  const conversionSummary = document.getElementById( 'conversionSummary' );
-  const defaultReference = document.getElementById( 'defaultReference' );
-  if ( conversionSummary ) conversionSummary.style.display = 'none';
-  if ( defaultReference ) defaultReference.style.display = 'block';
-  clearErrorMessages();
-} );
 
 // Language toggle
 const langToggle = document.getElementById( 'langToggle' );
