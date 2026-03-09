@@ -24,11 +24,86 @@ const toast = document.getElementById( 'toast' );
 const toastMessage = document.getElementById( 'toastMessage' );
 const validationSection = document.getElementById( 'validationSection' );
 const validationResults = document.getElementById( 'validationResults' );
+const errorMessageSection = document.getElementById( 'errorMessageSection' );
+const conversionErrorList = document.getElementById( 'conversionErrorList' );
 
 let selectedFile = null;
 let convertedYaml = null;
 let suggestedFileName = 'converted.relampo.yml';
 const showToast = createToastNotifier( toast, toastMessage );
+
+function clearErrorMessages() {
+  if ( conversionErrorList ) {
+    conversionErrorList.textContent = '';
+  }
+  if ( errorMessageSection ) {
+    errorMessageSection.style.display = 'none';
+  }
+}
+
+function showErrorMessages( errors ) {
+  if ( !errorMessageSection || !conversionErrorList ) {
+    return;
+  }
+
+  conversionErrorList.textContent = '';
+  for ( const error of errors ) {
+    const li = document.createElement( 'li' );
+    li.textContent = error;
+    conversionErrorList.appendChild( li );
+  }
+  errorMessageSection.style.display = 'block';
+}
+
+function getTagCounts( text, tagName ) {
+  const openRegex = new RegExp( `<${ tagName }(?=[\\s>/])`, 'g' );
+  const closeRegex = new RegExp( `</${ tagName }>`, 'g' );
+  const openCount = ( text.match( openRegex ) || [] ).length;
+  const closeCount = ( text.match( closeRegex ) || [] ).length;
+  return { openCount, closeCount };
+}
+
+function buildJMXErrorMessages( fileText, err ) {
+  const errors = [];
+  const tagNames = [ 'jmeterTestPlan', 'hashTree', 'HTTPSamplerProxy' ];
+  const mismatches = [];
+
+  for ( const tagName of tagNames ) {
+    const { openCount, closeCount } = getTagCounts( fileText, tagName );
+    if ( openCount !== closeCount ) {
+      mismatches.push( `${ tagName } open=${ openCount } close=${ closeCount }` );
+    }
+  }
+
+  if ( mismatches.length > 0 ) {
+    errors.push( 'Missing closing tags in the main XML structure:' );
+    errors.push( ...mismatches );
+  }
+
+  if ( !fileText.includes( '</jmeterTestPlan>' ) ) {
+    errors.push( 'No </jmeterTestPlan> closing tag found at the end of the file.' );
+  }
+
+  if ( errors.length === 0 ) {
+    errors.push( 'Invalid JMX XML structure. Please verify the file is complete and well-formed.' );
+  }
+
+  const errMessage = err?.message ? String( err.message ) : String( err || '' );
+  if ( errMessage && !errors.includes( errMessage ) ) {
+    errors.push( `Parser detail: ${ errMessage }` );
+  }
+
+  return errors;
+}
+
+function buildConversionErrorMessages( extension, fileText, err ) {
+  if ( extension === 'jmx' ) {
+    return buildJMXErrorMessages( fileText || '', err );
+  }
+
+  const errMessage = err?.message ? String( err.message ) : String( err || 'Unknown conversion error' );
+  return [ errMessage ];
+}
 
 function handleFile( file ) {
   if ( !file ) {
@@ -53,6 +128,7 @@ function handleFile( file ) {
   clearBtn.disabled = true;
   convertedYaml = null;
   validationSection.style.display = 'none';
+  clearErrorMessages();
 }
 
 function clearFile() {
@@ -61,6 +137,21 @@ function clearFile() {
   uploadZone.classList.remove( 'has-file' );
   convertBtn.disabled = true;
   fileInput.value = '';
+
+  convertedYaml = null;
+  setYamlOutput( '' );
+  downloadBtn.disabled = true;
+  copyBtn.disabled = true;
+  clearBtn.disabled = true;
+  searchBtn.disabled = true;
+  validationSection.style.display = 'none';
+  hideSearchBar();
+
+  const conversionSummary = document.getElementById( 'conversionSummary' );
+  const defaultReference = document.getElementById( 'defaultReference' );
+  if ( conversionSummary ) conversionSummary.style.display = 'none';
+  if ( defaultReference ) defaultReference.style.display = 'block';
+  clearErrorMessages();
 }
 
 async function convertFile() {
@@ -69,8 +160,9 @@ async function convertFile() {
   }
 
   const extension = getFileExtension( selectedFile.name );
+  let fileText = '';
   try {
-    const fileText = await selectedFile.text();
+    fileText = await selectedFile.text();
     convertedYaml = convertContent( fileText, extension );
     suggestedFileName = buildSuggestedFileName( selectedFile.name );
 
@@ -82,6 +174,7 @@ async function convertFile() {
 
     const validation = validateYaml( convertedYaml );
     displayValidation( validation, validationSection, validationResults );
+    clearErrorMessages();
     
     // Analyze and display conversion summary
     analyzeConversionSummary( convertedYaml );
@@ -95,6 +188,7 @@ async function convertFile() {
     clearBtn.disabled = true;
     searchBtn.disabled = true;
     analyzeConversionSummary( null );
+    showErrorMessages( buildConversionErrorMessages( extension, fileText, err ) );
     showToast( 'Could not convert the file', 'error' );
   }
 }
@@ -330,6 +424,7 @@ clearBtn.addEventListener( 'click', () => {
   const defaultReference = document.getElementById( 'defaultReference' );
   if ( conversionSummary ) conversionSummary.style.display = 'none';
   if ( defaultReference ) defaultReference.style.display = 'block';
+  clearErrorMessages();
 } );
 
 // Language toggle
