@@ -23,6 +23,7 @@ export const translations = {
     referenceTitle: "Reference",
     summaryTitle: "Conversion Summary",
     generatedOutput: "Generated Output",
+    errorMessageTitle: "Error Message",
     includes: "✓ Includes",
     includesList: {
       metadata: "test metadata",
@@ -73,6 +74,7 @@ export const translations = {
     referenceTitle: "Referencia",
     summaryTitle: "Resumen de Conversión",
     generatedOutput: "Salida Generada",
+    errorMessageTitle: "Mensaje de Error",
     includes: "✓ Incluye",
     includesList: {
       metadata: "metadatos del test",
