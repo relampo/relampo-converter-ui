@@ -31,6 +31,17 @@ let convertedYaml = null;
 let suggestedFileName = 'converted.relampo.yml';
 const showToast = createToastNotifier( toast, toastMessage );
 
+const searchBar = document.getElementById( 'searchBar' );
+const searchInput = document.getElementById( 'searchInput' );
+const searchCounter = document.getElementById( 'searchCounter' );
+const searchPrev = document.getElementById( 'searchPrev' );
+const searchNext = document.getElementById( 'searchNext' );
+const searchClose = document.getElementById( 'searchClose' );
+
+let searchMatches = [];
+let currentMatchIndex = -1;
+let originalYamlHtml = '';
+
 function clearErrorMessages() {
   if ( conversionErrorList ) {
     conversionErrorList.textContent = '';
@@ -104,6 +115,22 @@ function buildConversionErrorMessages( extension, fileText, err ) {
   return [ errMessage ];
 }
 
+function resetSearchState( { clearOutput = false } = {} ) {
+  if ( searchBar ) {
+    searchBar.style.display = 'none';
+  }
+  if ( searchInput ) {
+    searchInput.value = '';
+  }
+  searchMatches = [];
+  currentMatchIndex = -1;
+  originalYamlHtml = '';
+  if ( clearOutput ) {
+    yamlCode.textContent = '';
+  }
+  updateSearchUI();
+}
+
 function handleFile( file ) {
   if ( !file ) {
     return;
@@ -124,8 +151,10 @@ function handleFile( file ) {
   setYamlOutput( '' );
   downloadBtn.disabled = true;
   copyBtn.disabled = true;
+  searchBtn.disabled = true;
   convertedYaml = null;
   validationSection.style.display = 'none';
+  resetSearchState();
   clearErrorMessages();
 }
 
@@ -142,7 +171,7 @@ function clearFile() {
   copyBtn.disabled = true;
   searchBtn.disabled = true;
   validationSection.style.display = 'none';
-  hideSearchBar();
+  resetSearchState();
 
   const conversionSummary = document.getElementById( 'conversionSummary' );
   const defaultReference = document.getElementById( 'defaultReference' );
@@ -419,17 +448,6 @@ langToggle.addEventListener( 'change', ( e ) => {
 initI18n();
 
 // Search functionality
-const searchBar = document.getElementById( 'searchBar' );
-const searchInput = document.getElementById( 'searchInput' );
-const searchCounter = document.getElementById( 'searchCounter' );
-const searchPrev = document.getElementById( 'searchPrev' );
-const searchNext = document.getElementById( 'searchNext' );
-const searchClose = document.getElementById( 'searchClose' );
-
-let searchMatches = [];
-let currentMatchIndex = -1;
-let originalYamlHtml = '';
-
 function showSearchBar() {
   if ( searchBar && convertedYaml ) {
     searchBar.style.display = 'flex';
@@ -439,11 +457,10 @@ function showSearchBar() {
 }
 
 function hideSearchBar() {
-  if ( searchBar ) {
-    searchBar.style.display = 'none';
-    searchInput.value = '';
-    clearSearchHighlights();
-  }
+  if ( !searchBar ) return;
+  clearSearchHighlights();
+  searchBar.style.display = 'none';
+  searchInput.value = '';
 }
 
 function clearSearchHighlights() {
@@ -615,15 +632,5 @@ document.addEventListener( 'keydown', ( e ) => {
   if ( ( e.ctrlKey || e.metaKey ) && e.key === 'f' && convertedYaml ) {
     e.preventDefault();
     showSearchBar();
-  }
-} );
-
-// Update convertBtn to also hide search
-const originalConvertBtnHandler = convertFile;
-convertBtn.removeEventListener( 'click', convertFile );
-convertBtn.addEventListener( 'click', async () => {
-  await originalConvertBtnHandler();
-  if ( searchBar && searchBar.style.display !== 'none' ) {
-    hideSearchBar();
   }
 } );
