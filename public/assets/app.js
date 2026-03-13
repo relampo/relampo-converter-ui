@@ -4,7 +4,7 @@ import { convertContent } from './helpers/conversion.js';
 import { buildSuggestedFileName, getFileExtension, isSupportedInputExtension } from './helpers/file.js';
 import { createToastNotifier } from './helpers/toast.js';
 import { displayValidation, validateYaml } from './helpers/validation.js';
-import { initI18n, setLanguage, getCurrentLanguage, t } from './i18n.js';
+import { initI18n, setLanguage, t } from './i18n.js';
 
 hljs.registerLanguage( 'yaml', yaml );
 
@@ -17,6 +17,10 @@ const convertBtn = document.getElementById( 'convertBtn' );
 const yamlOutput = document.getElementById( 'yamlOutput' );
 const yamlCode = document.getElementById( 'yamlCode' );
 const downloadBtn = document.getElementById( 'downloadBtn' );
+const downloadOptionsModal = document.getElementById( 'downloadOptionsModal' );
+const downloadWithAssertionsBtn = document.getElementById( 'downloadWithAssertionsBtn' );
+const downloadWithoutAssertionsBtn = document.getElementById( 'downloadWithoutAssertionsBtn' );
+const downloadCancelBtn = document.getElementById( 'downloadCancelBtn' );
 const copyBtn = document.getElementById( 'copyBtn' );
 const searchBtn = document.getElementById( 'searchBtn' );
 const toast = document.getElementById( 'toast' );
@@ -155,6 +159,7 @@ function handleFile( file ) {
   convertedYaml = null;
   validationSection.style.display = 'none';
   resetSearchState();
+  hideDownloadOptionsModal();
   clearErrorMessages();
 }
 
@@ -172,6 +177,7 @@ function clearFile() {
   searchBtn.disabled = true;
   validationSection.style.display = 'none';
   resetSearchState();
+  hideDownloadOptionsModal();
 
   const conversionSummary = document.getElementById( 'conversionSummary' );
   const defaultReference = document.getElementById( 'defaultReference' );
@@ -222,16 +228,136 @@ function downloadYaml() {
     return;
   }
 
-  const blob = new Blob( [ convertedYaml ], { type: 'text/yaml' } );
+  showDownloadOptionsModal();
+}
+
+function showDownloadOptionsModal() {
+  if ( !downloadOptionsModal || !convertedYaml ) {
+    return;
+  }
+
+  downloadOptionsModal.classList.add( 'visible' );
+  downloadOptionsModal.setAttribute( 'aria-hidden', 'false' );
+  if ( downloadWithAssertionsBtn ) {
+    downloadWithAssertionsBtn.focus();
+  }
+}
+
+function hideDownloadOptionsModal() {
+  if ( !downloadOptionsModal ) {
+    return;
+  }
+
+  downloadOptionsModal.classList.remove( 'visible' );
+  downloadOptionsModal.setAttribute( 'aria-hidden', 'true' );
+}
+
+function buildDownloadName( includeAssertions ) {
+  if ( includeAssertions ) {
+    return suggestedFileName;
+  }
+
+  if ( suggestedFileName.endsWith( '.relampo.yml' ) ) {
+    return `${ suggestedFileName.slice( 0, -12 ) }.no-assertions.relampo.yml`;
+  }
+
+  if ( suggestedFileName.endsWith( '.yml' ) ) {
+    return `${ suggestedFileName.slice( 0, -4 ) }-no-assertions.yml`;
+  }
+
+  return `${ suggestedFileName }-no-assertions`;
+}
+
+function removeAssertionBlocks( yamlText ) {
+  if ( !yamlText ) {
+    return '';
+  }
+
+  const hadTrailingNewline = yamlText.endsWith( '\n' );
+  const lines = yamlText.split( '\n' );
+  const result = [];
+
+  for ( let i = 0; i < lines.length; ) {
+    const line = lines[ i ];
+    const assertionMatch = line.match( /^(\s*)(assertions|assert):\s*.*$/ );
+    if ( !assertionMatch ) {
+      result.push( line );
+      i += 1;
+      continue;
+    }
+
+    const blockIndent = assertionMatch[ 1 ].length;
+    i += 1;
+
+    while ( i < lines.length ) {
+      const nextLine = lines[ i ];
+      if ( !nextLine.trim() ) {
+        i += 1;
+        continue;
+      }
+
+      const nextIndent = ( nextLine.match( /^\s*/ ) || [ '' ] )[ 0 ].length;
+      if ( nextIndent <= blockIndent ) {
+        break;
+      }
+      i += 1;
+    }
+
+    while ( result.length > 0 && result[ result.length - 1 ].trim() === '' ) {
+      result.pop();
+    }
+
+    if ( i < lines.length && lines[ i ].trim() !== '' && result.length > 0 ) {
+      result.push( '' );
+    }
+  }
+
+  let output = result.join( '\n' ).replace( /\n{3,}/g, '\n\n' );
+  if ( hadTrailingNewline && output && !output.endsWith( '\n' ) ) {
+    output += '\n';
+  }
+  return output;
+}
+
+function resetAssertionStats( yamlText ) {
+  return yamlText
+    .replace( /^(#\s*-\s*Assertions[^:]*:\s*)\d+\s*$/gm, '$10' )
+    .replace( /^(#\s*-\s*Custom Assertions[^:]*:\s*)\d+\s*$/gm, '$10' );
+}
+
+function prepareYamlForDownload( includeAssertions ) {
+  let content = includeAssertions ? convertedYaml : removeAssertionBlocks( convertedYaml );
+  if ( !includeAssertions ) {
+    content = resetAssertionStats( content );
+  }
+
+  const warningText = t( 'downloadOptionsWarning' );
+  const loadWarningComment = `# ${ warningText }`;
+  return `${ loadWarningComment }\n${ content }`;
+}
+
+function triggerDownload( content, fileName ) {
+  const blob = new Blob( [ content ], { type: 'text/yaml' } );
   const url = URL.createObjectURL( blob );
   const a = document.createElement( 'a' );
   a.href = url;
-  a.download = suggestedFileName;
+  a.download = fileName;
   document.body.appendChild( a );
   a.click();
   document.body.removeChild( a );
   URL.revokeObjectURL( url );
-  showToast( `Downloaded: ${ suggestedFileName }` );
+  showToast( `Downloaded: ${ fileName }` );
+}
+
+function downloadYamlWithOption( includeAssertions ) {
+  if ( !convertedYaml ) {
+    return;
+  }
+
+  const outputName = buildDownloadName( includeAssertions );
+  const outputContent = prepareYamlForDownload( includeAssertions );
+  triggerDownload( outputContent, outputName );
+  hideDownloadOptionsModal();
 }
 
 async function copyToClipboard() {
@@ -437,6 +563,30 @@ downloadBtn.addEventListener( 'click', downloadYaml );
 copyBtn.addEventListener( 'click', copyToClipboard );
 searchBtn.addEventListener( 'click', showSearchBar );
 
+if ( downloadWithAssertionsBtn ) {
+  downloadWithAssertionsBtn.addEventListener( 'click', () => {
+    downloadYamlWithOption( true );
+  } );
+}
+
+if ( downloadWithoutAssertionsBtn ) {
+  downloadWithoutAssertionsBtn.addEventListener( 'click', () => {
+    downloadYamlWithOption( false );
+  } );
+}
+
+if ( downloadCancelBtn ) {
+  downloadCancelBtn.addEventListener( 'click', hideDownloadOptionsModal );
+}
+
+if ( downloadOptionsModal ) {
+  downloadOptionsModal.addEventListener( 'click', ( event ) => {
+    if ( event.target === downloadOptionsModal ) {
+      hideDownloadOptionsModal();
+    }
+  } );
+}
+
 // Language toggle
 const langToggle = document.getElementById( 'langToggle' );
 langToggle.addEventListener( 'change', ( e ) => {
@@ -629,6 +779,11 @@ if ( searchClose ) {
 
 // Keyboard shortcut Ctrl+F / Cmd+F to open search
 document.addEventListener( 'keydown', ( e ) => {
+  if ( e.key === 'Escape' && downloadOptionsModal?.classList.contains( 'visible' ) ) {
+    hideDownloadOptionsModal();
+    return;
+  }
+
   if ( ( e.ctrlKey || e.metaKey ) && e.key === 'f' && convertedYaml ) {
     e.preventDefault();
     showSearchBar();

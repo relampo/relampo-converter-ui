@@ -476,6 +476,29 @@ test:
       </div>
     </div>
 
+    <div class='download-modal-backdrop' id='downloadOptionsModal' aria-hidden='true'>
+      <div class='download-modal' role='dialog' aria-modal='true' aria-labelledby='downloadOptionsTitle'>
+        <h3 id='downloadOptionsTitle' data-i18n='downloadOptionsTitle'>Download Options</h3>
+        <p class='download-modal-message' data-i18n='downloadOptionsMessage'>
+          Choose how you want to download the converted YAML file.
+        </p>
+        <div class='download-modal-warning' data-i18n='downloadOptionsWarning'>
+          For load generation, too many assertions can slow down tests.
+        </div>
+        <div class='download-modal-actions'>
+          <button class='btn btn-success' id='downloadWithAssertionsBtn' data-i18n='downloadWithAssertions'>
+            Download with assertions
+          </button>
+          <button class='btn btn-secondary' id='downloadWithoutAssertionsBtn' data-i18n='downloadWithoutAssertions'>
+            Download without assertions
+          </button>
+          <button class='btn btn-secondary' id='downloadCancelBtn' data-i18n='downloadCancel'>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast -->
     <div
       class='toast'

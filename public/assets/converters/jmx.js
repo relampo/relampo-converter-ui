@@ -21,6 +21,20 @@ function elementChildren(node) {
   return Array.from(node.children ?? []);
 }
 
+function pruneEmptyVariables(variables = {}) {
+  const cleaned = {};
+  for (const [key, value] of Object.entries(variables)) {
+    if (value == null) {
+      continue;
+    }
+    if (typeof value === 'string' && value.trim() === '') {
+      continue;
+    }
+    cleaned[key] = value;
+  }
+  return cleaned;
+}
+
 function findDirectChild(node, tagName, attrName, attrValue) {
   for (const child of elementChildren(node)) {
     if (child.tagName !== tagName) {
@@ -430,14 +444,12 @@ function parseAssertions(hashTreeNode, context) {
         } else if (testField === 'Assertion.response_data') {
           if (testType === '16' || !testType) { // contains
             assertions.push({
-              name: elementName,
-              type: 'body_contains',
+              type: 'contains',
               value: value
             });
           } else if (testType === '2') { // matches
             assertions.push({
-              name: elementName,
-              type: 'body_matches',
+              type: 'regex',
               value: value
             });
           }
@@ -451,7 +463,6 @@ function parseAssertions(hashTreeNode, context) {
       
       if (jsonPath) {
         assertions.push({
-          name: elementName,
           type: 'jsonpath',
           path: jsonPath,
           value: expectedValue || true
@@ -464,9 +475,8 @@ function parseAssertions(hashTreeNode, context) {
         const duration = getStringProp(child, 'DurationAssertion.duration');
         const durationMs = duration ? parseInt(duration) : 0;
         assertions.push({
-          name: elementName,
           type: 'response_time_max',
-          value: durationMs > 0 ? `${Math.ceil(durationMs / 1000)}s` : 'INCOMPLETE'
+          value: durationMs > 0 ? durationMs : 'INCOMPLETE'
         });
       }
       
@@ -733,7 +743,7 @@ function convertSamplerToStep(sampler, samplerHashTree, context = {}) {
   // Add assertions
   const assertions = parseAssertions(samplerHashTree, context);
   if (assertions) {
-    request.assert = assertions;
+    request.assertions = assertions;
     if (countStats && context.stats) context.stats.assertions += assertions.length;
   }
 
@@ -1160,8 +1170,10 @@ export function convertJMXToPulseYAML(jmxText, customOptions = {}) {
   
   const steps = parseStepsFromHashTree(targetTree, {}, context);
 
+  const cleanedVariables = pruneEmptyVariables(context.variables);
+
   // Update stats with variables and data sources count
-  context.stats.variables = Object.keys(context.variables).length;
+  context.stats.variables = Object.keys(cleanedVariables).length;
   context.stats.dataSources = context.csvDataSources.length;
 
   const pulse = {
@@ -1173,10 +1185,8 @@ export function convertJMXToPulseYAML(jmxText, customOptions = {}) {
   };
 
   // Add variables if any
-  if (Object.keys(context.variables).length > 0) {
-    pulse.variables = context.variables;
-  } else {
-    pulse.variables = {};
+  if (Object.keys(cleanedVariables).length > 0) {
+    pulse.variables = cleanedVariables;
   }
 
   // Add data_source if CSV configs found (use first one for now)
@@ -1190,6 +1200,9 @@ export function convertJMXToPulseYAML(jmxText, customOptions = {}) {
   };
 
   if (detectedBaseURL) {
+    if (!pulse.variables) {
+      pulse.variables = {};
+    }
     pulse.variables.base_url = detectedBaseURL;
     pulse.http_defaults.base_url = detectedBaseURL;
   }
@@ -1202,14 +1215,9 @@ export function convertJMXToPulseYAML(jmxText, customOptions = {}) {
         duration: options.defaultDuration,
         ramp_up: options.defaultRampUp
       },
-      cookies: 'auto',
       steps
     }
   ];
-
-  pulse.metrics = {
-    enabled: true
-  };
 
   // Generate YAML with header comments
   const yaml = stringifyYAML(pulse);
