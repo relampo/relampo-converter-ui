@@ -456,6 +456,66 @@ header {
   margin-top: 16px;
 }
 
+.download-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(10, 10, 10, 0.7);
+  z-index: 1100;
+}
+
+.download-modal-backdrop.visible {
+  display: flex;
+}
+
+.download-modal {
+  width: min(560px, 100%);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.55);
+}
+
+.download-modal h3 {
+  margin: 0 0 10px;
+  font-size: 18px;
+  color: var(--text-primary);
+}
+
+.download-modal-message {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.download-modal-warning {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-left: 4px solid var(--warning);
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.08);
+  color: #facc15;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.download-modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.download-modal-actions .btn {
+  width: auto;
+  flex: 1;
+}
+
 /* Language Toggle */
 .lang-toggle {
   display: flex;
@@ -630,4 +690,14 @@ html[lang='es'] .lang-toggle .lang-label.lang-es {
   padding: 2px 0;
   border-radius: 2px;
   box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
+}
+
+@media (max-width: 700px) {
+  .download-modal-actions {
+    flex-direction: column;
+  }
+
+  .download-modal-actions .btn {
+    width: 100%;
+  }
 }

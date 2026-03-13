@@ -17,6 +17,12 @@ export const translations = {
     outputTitle: "YAML Output",
     outputPlaceholder: "Your converted YAML will appear here...",
     downloadButton: "Download YAML",
+    downloadOptionsTitle: "Download Options",
+    downloadOptionsMessage: "Choose how you want to download the converted YAML file.",
+    downloadOptionsWarning: "For load generation, too many assertions can slow down tests.",
+    downloadWithAssertions: "Download with assertions",
+    downloadWithoutAssertions: "Download without assertions",
+    downloadCancel: "Cancel",
     copyButton: "Copy",
     
     // Reference Panel
@@ -68,6 +74,12 @@ export const translations = {
     outputTitle: "Salida YAML",
     outputPlaceholder: "Tu YAML convertido aparecerá aquí...",
     downloadButton: "Descargar YAML",
+    downloadOptionsTitle: "Opciones de descarga",
+    downloadOptionsMessage: "Elige cómo quieres descargar el archivo YAML convertido.",
+    downloadOptionsWarning: "Para generación de carga, demasiadas aserciones pueden ralentizar las pruebas.",
+    downloadWithAssertions: "Descargar con aserciones",
+    downloadWithoutAssertions: "Descargar sin aserciones",
+    downloadCancel: "Cancelar",
     copyButton: "Copiar",
     
     // Panel de Referencia
