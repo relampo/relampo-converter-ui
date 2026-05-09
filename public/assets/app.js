@@ -427,7 +427,7 @@ function analyzeConversionSummary( yamlContent ) {
       const assertionsMatch = line.match( /# - Assertions: (\d+)/ );
       if ( assertionsMatch ) summary.assertions = parseInt( assertionsMatch[ 1 ] );
       
-      const sparkMatch = line.match( /# - Spark Scripts[^:]*: (\d+)/ );
+      const sparkMatch = line.match( /# - Spark (?:Scripts|Logic Blocks)[^:]*: (\d+)/ );
       if ( sparkMatch ) summary.sparkScripts = parseInt( sparkMatch[ 1 ] );
       
       const variablesMatch = line.match( /# - User Variables: (\d+)/ );
@@ -511,7 +511,7 @@ function displayConversionSummary( summary ) {
   if ( summary.requests > 0 ) convertedItems.push( `${ summary.requests } HTTP Requests` );
   if ( summary.extractors > 0 ) convertedItems.push( `${ summary.extractors } Extractors` );
   if ( summary.assertions > 0 ) convertedItems.push( `${ summary.assertions } Assertions` );
-  if ( summary.sparkScripts > 0 ) convertedItems.push( `${ summary.sparkScripts } Spark Scripts` );
+  if ( summary.sparkScripts > 0 ) convertedItems.push( `${ summary.sparkScripts } Spark Logic Blocks` );
   if ( summary.variables > 0 ) convertedItems.push( `${ summary.variables } User Variables` );
   if ( summary.dataSources > 0 ) convertedItems.push( `${ summary.dataSources } CSV Data Sources` );
   if ( summary.timers > 0 ) convertedItems.push( `${ summary.timers } Timers` );
