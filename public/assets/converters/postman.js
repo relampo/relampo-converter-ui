@@ -1,7 +1,5 @@
 import { stringifyYAML } from './yaml.js';
 
-const EXTRACT_REGEX =
-  /pm\.(environment|collectionVariables|variables)\.set\(\s*["']([^"']+)["']\s*,\s*pm\.response\.json\(\)\.([a-zA-Z0-9_]+)\s*\)/;
 const SCRIPT_SET_REGEX =
   /pm\.(environment|collectionVariables|variables)\.set\(\s*["']([^"']+)["']/;
 const SCRIPT_SET_CAPTURE_REGEX =
@@ -67,6 +65,10 @@ function getRequestURL(request) {
 }
 
 function normalizeURL(raw) {
+  if (typeof raw === 'string' && /{{\s*[^}]+\s*}}/.test(raw)) {
+    return raw;
+  }
+
   try {
     const parsed = new URL(raw);
     if (parsed.host) {
@@ -78,6 +80,149 @@ function normalizeURL(raw) {
   return raw;
 }
 
+function isValidVariableName(name) {
+  return typeof name === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+}
+
+function parsePostmanSetCall(line) {
+  if (typeof line !== 'string') {
+    return null;
+  }
+
+  const matches = SCRIPT_SET_CAPTURE_REGEX.exec(line);
+  if (!matches || matches.length < 4 || !isValidVariableName(matches[2])) {
+    return null;
+  }
+
+  return {
+    variableName: matches[2],
+    expression: matches[3].trim()
+  };
+}
+
+function stripFallbackExpression(expression) {
+  if (typeof expression !== 'string') {
+    return '';
+  }
+
+  return expression
+    .trim()
+    .replace(/;$/, '')
+    .split(/\s+\|\|\s+/)[0]
+    .trim();
+}
+
+function buildJsonPathFromPostmanSource(source, jsonAliases, pathAliases = new Map()) {
+  const directPath = buildJsonPathFromSource(stripFallbackExpression(source), jsonAliases);
+  if (directPath) {
+    return directPath;
+  }
+
+  const compact = stripFallbackExpression(source).replace(/\s+/g, '');
+  const aliasMatch = compact.match(/^([A-Za-z_$][\w$]*)([\s\S]*)$/);
+  if (!aliasMatch) {
+    return null;
+  }
+
+  const alias = aliasMatch[1];
+  const accessor = aliasMatch[2] || '';
+  if (!pathAliases.has(alias)) {
+    return null;
+  }
+
+  if (!accessor) {
+    return pathAliases.get(alias);
+  }
+
+  return combineJsonPaths(pathAliases.get(alias), normalizePropertyPath(accessor));
+}
+
+function registerPathAliasFromLine(line, jsonAliases, pathAliases) {
+  if (typeof line !== 'string' || !pathAliases) {
+    return false;
+  }
+
+  const match = line.match(
+    /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]+?)\s*;?\s*$/
+  );
+  if (!match) {
+    return false;
+  }
+
+  const alias = match[1];
+  const expression = stripFallbackExpression(match[2]);
+  if (!expression || /\.find\s*\(/.test(expression)) {
+    return false;
+  }
+
+  const path = buildJsonPathFromPostmanSource(expression, jsonAliases, pathAliases);
+  if (!path || path === '$') {
+    return false;
+  }
+
+  pathAliases.set(alias, path);
+  return true;
+}
+
+function parseSetterFunctionStart(line) {
+  if (typeof line !== 'string') {
+    return null;
+  }
+
+  const arrowMatch = line.match(
+    /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>\s*\{\s*$/
+  );
+  if (arrowMatch) {
+    return { name: arrowMatch[1], parameter: arrowMatch[2] };
+  }
+
+  const functionMatch = line.match(
+    /^\s*function\s+([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)\s*\)\s*\{\s*$/
+  );
+  if (functionMatch) {
+    return { name: functionMatch[1], parameter: functionMatch[2] };
+  }
+
+  return null;
+}
+
+function parseSetterFunctionCall(line, setterFunctions, jsonAliases, pathAliases) {
+  if (typeof line !== 'string' || !setterFunctions) {
+    return null;
+  }
+
+  const match = line.match(/^\s*([A-Za-z_$][\w$]*)\(\s*([\s\S]+?)\s*\)\s*;?\s*$/);
+  if (!match || !setterFunctions.has(match[1])) {
+    return null;
+  }
+
+  const setter = setterFunctions.get(match[1]);
+  const path = buildJsonPathFromPostmanSource(match[2], jsonAliases, pathAliases);
+  if (!path) {
+    return null;
+  }
+
+  return {
+    variableName: setter.variableName,
+    path
+  };
+}
+
+function isNativeExtractedSet(line, nativeExtracts, jsonAliases, pathAliases, setterFunctions) {
+  if (!nativeExtracts || typeof nativeExtracts !== 'object') {
+    return false;
+  }
+
+  const setCall = parsePostmanSetCall(line);
+  if (setCall) {
+    const path = buildJsonPathFromPostmanSource(setCall.expression, jsonAliases, pathAliases);
+    return Boolean(path && nativeExtracts[setCall.variableName] === path);
+  }
+
+  const setterCall = parseSetterFunctionCall(line, setterFunctions, jsonAliases, pathAliases);
+  return Boolean(setterCall && nativeExtracts[setterCall.variableName] === setterCall.path);
+}
+
 function parseExtract(events = []) {
   const extracts = {};
 
@@ -86,14 +231,43 @@ function parseExtract(events = []) {
       continue;
     }
 
+    const jsonAliases = new Set();
+    const pathAliases = new Map();
+    const setterFunctions = new Map();
+    let activeSetterFunction = null;
+
     for (const line of event.script.exec) {
-      const matches = EXTRACT_REGEX.exec(line);
-      if (!matches || matches.length !== 4) {
+      registerJsonAliasFromLine(line, jsonAliases);
+      registerPathAliasFromLine(line, jsonAliases, pathAliases);
+
+      const functionStart = parseSetterFunctionStart(line);
+      if (functionStart) {
+        activeSetterFunction = functionStart;
+      }
+
+      const setCall = parsePostmanSetCall(line);
+      if (activeSetterFunction && setCall && setCall.expression === activeSetterFunction.parameter) {
+        setterFunctions.set(activeSetterFunction.name, {
+          variableName: setCall.variableName
+        });
+      }
+
+      if (activeSetterFunction && /^\s*\}\s*;?\s*$/.test(line)) {
+        activeSetterFunction = null;
+      }
+
+      if (setCall) {
+        const path = buildJsonPathFromPostmanSource(setCall.expression, jsonAliases, pathAliases);
+        if (path) {
+          extracts[setCall.variableName] = path;
+        }
         continue;
       }
-      const variableName = matches[2];
-      const field = matches[3];
-      extracts[variableName] = `$.${field}`;
+
+      const setterCall = parseSetterFunctionCall(line, setterFunctions, jsonAliases, pathAliases);
+      if (setterCall) {
+        extracts[setterCall.variableName] = setterCall.path;
+      }
     }
   }
 
@@ -128,13 +302,13 @@ function setVariable(variables, key, value = '') {
   }
 }
 
-function pruneEmptyVariables(variables = {}) {
+function pruneEmptyVariables(variables = {}, referencedVariables = new Set()) {
   const cleaned = {};
   for (const [key, value] of Object.entries(variables)) {
     if (value == null) {
       continue;
     }
-    if (typeof value === 'string' && value.trim() === '') {
+    if (typeof value === 'string' && value.trim() === '' && !referencedVariables.has(key)) {
       continue;
     }
     cleaned[key] = value;
@@ -142,13 +316,16 @@ function pruneEmptyVariables(variables = {}) {
   return cleaned;
 }
 
-function collectTemplateVariables(raw, variables) {
+function collectTemplateVariables(raw, variables, referencedVariables) {
   if (typeof raw !== 'string' || !variables) {
     return;
   }
 
   const templateRegex = /{{\s*([^}\s]+)\s*}}/g;
   for (const match of raw.matchAll(templateRegex)) {
+    if (referencedVariables) {
+      referencedVariables.add(match[1]);
+    }
     setVariable(variables, match[1], '');
   }
 }
@@ -166,52 +343,53 @@ function collectVariableEntries(entries = [], variables) {
   }
 }
 
-function collectVariablesFromRequest(request = {}, variables) {
+function collectVariablesFromRequest(request = {}, variables, referencedVariables) {
   if (!variables) {
     return;
   }
 
-  collectTemplateVariables(getRequestURL(request), variables);
+  collectTemplateVariables(getRequestURL(request), variables, referencedVariables);
 
   for (const header of request.header ?? []) {
     if (!header || header.disabled || !header.key) {
       continue;
     }
-    collectTemplateVariables(header.value ?? '', variables);
+    collectTemplateVariables(header.value ?? '', variables, referencedVariables);
   }
 
   const body = request.body ?? {};
   if (typeof body.raw === 'string') {
-    collectTemplateVariables(body.raw, variables);
+    collectTemplateVariables(body.raw, variables, referencedVariables);
   }
 
   for (const formItem of body.formdata ?? []) {
     if (!formItem || formItem.disabled || !formItem.key) {
       continue;
     }
-    collectTemplateVariables(formItem.value ?? '', variables);
+    collectTemplateVariables(formItem.value ?? '', variables, referencedVariables);
   }
 
   for (const urlEncodedItem of body.urlencoded ?? []) {
     if (!urlEncodedItem || urlEncodedItem.disabled || !urlEncodedItem.key) {
       continue;
     }
-    collectTemplateVariables(urlEncodedItem.value ?? '', variables);
+    collectTemplateVariables(urlEncodedItem.value ?? '', variables, referencedVariables);
   }
 
   if (typeof body.file?.src === 'string') {
-    collectTemplateVariables(body.file.src, variables);
+    collectTemplateVariables(body.file.src, variables, referencedVariables);
   }
 
   if (typeof body.graphql?.query === 'string') {
-    collectTemplateVariables(body.graphql.query, variables);
+    collectTemplateVariables(body.graphql.query, variables, referencedVariables);
   }
   if (body.graphql?.variables != null) {
     collectTemplateVariables(
       typeof body.graphql.variables === 'string'
         ? body.graphql.variables
         : JSON.stringify(body.graphql.variables),
-      variables
+      variables,
+      referencedVariables
     );
   }
 
@@ -221,7 +399,7 @@ function collectVariablesFromRequest(request = {}, variables) {
       if (!queryEntry || queryEntry.disabled || !queryEntry.key) {
         continue;
       }
-      collectTemplateVariables(queryEntry.value ?? '', variables);
+      collectTemplateVariables(queryEntry.value ?? '', variables, referencedVariables);
     }
   }
 
@@ -230,7 +408,7 @@ function collectVariablesFromRequest(request = {}, variables) {
       if (!authEntry || authEntry.disabled === true) {
         continue;
       }
-      collectTemplateVariables(authEntry.value ?? '', variables);
+      collectTemplateVariables(authEntry.value ?? '', variables, referencedVariables);
     }
   }
 }
@@ -348,6 +526,178 @@ function convertPostmanRuntimeRefs(code) {
   return converted;
 }
 
+function convertPostmanSetLineToVars(line) {
+  const setMatch = typeof line === 'string' ? line.match(
+    /^(\s*)pm\.(environment|collectionVariables|variables)\.set\(\s*["']([^"']+)["']\s*,\s*(.+)\)\s*;?\s*$/
+  ) : null;
+  if (!setMatch) {
+    return null;
+  }
+
+  const indent = setMatch[1] ?? '';
+  const variableName = setMatch[3];
+  const valueExpression = convertPostmanRuntimeRefs(setMatch[4].trim());
+  return `${indent}vars.set("${variableName}", ${valueExpression});`;
+}
+
+function parseVariableDeclaration(line) {
+  if (typeof line !== 'string') {
+    return null;
+  }
+
+  const match = line.match(/^\s*(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]+?)\s*;?\s*$/);
+  if (!match) {
+    return null;
+  }
+
+  const expression = convertPostmanRuntimeRefs(match[3].trim());
+  if (/\bpm\./.test(expression)) {
+    return null;
+  }
+
+  return {
+    kind: match[1],
+    name: match[2],
+    expression,
+    line: `${match[1]} ${match[2]} = ${expression};`
+  };
+}
+
+function collectExpressionAliases(expression, declarations) {
+  const aliases = new Set();
+  if (typeof expression !== 'string' || !declarations) {
+    return aliases;
+  }
+
+  const identifierRegex = /\b[A-Za-z_$][\w$]*\b/g;
+  for (const match of expression.matchAll(identifierRegex)) {
+    if (declarations.has(match[0])) {
+      aliases.add(match[0]);
+    }
+  }
+  return aliases;
+}
+
+function buildPostmanVariableBridgeScript(lines = [], nativeExtracts = null) {
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return null;
+  }
+
+  const jsonAliases = new Set();
+  const pathAliases = new Map();
+  const setterFunctions = new Map();
+  const declarations = new Map();
+  const findAliases = new Set();
+  const setEntries = [];
+  let activeSetterFunction = null;
+
+  for (const line of lines) {
+    registerJsonAliasFromLine(line, jsonAliases);
+    registerPathAliasFromLine(line, jsonAliases, pathAliases);
+
+    const declaration = parseVariableDeclaration(line);
+    if (declaration) {
+      declarations.set(declaration.name, declaration);
+      if (/\.find\s*\(/.test(declaration.expression)) {
+        findAliases.add(declaration.name);
+      }
+    }
+
+    const functionStart = parseSetterFunctionStart(line);
+    if (functionStart) {
+      activeSetterFunction = functionStart;
+    }
+
+    const setCall = parsePostmanSetCall(line);
+    if (activeSetterFunction && setCall && setCall.expression === activeSetterFunction.parameter) {
+      setterFunctions.set(activeSetterFunction.name, {
+        variableName: setCall.variableName
+      });
+    }
+
+    if (activeSetterFunction && /^\s*\}\s*;?\s*$/.test(line)) {
+      activeSetterFunction = null;
+    }
+
+    if (!setCall || isNativeExtractedSet(line, nativeExtracts, jsonAliases, pathAliases, setterFunctions)) {
+      continue;
+    }
+
+    const convertedSetLine = convertPostmanSetLineToVars(line);
+    if (!convertedSetLine || /\bpm\./.test(convertedSetLine)) {
+      continue;
+    }
+
+    const dependencies = collectExpressionAliases(setCall.expression, declarations);
+    const guard = [...dependencies].find((alias) => findAliases.has(alias)) || null;
+    setEntries.push({
+      line: convertedSetLine.trim(),
+      dependencies,
+      guard
+    });
+  }
+
+  if (setEntries.length === 0) {
+    return null;
+  }
+
+  const output = [];
+  const emittedDeclarations = new Set();
+
+  function emitDeclaration(alias) {
+    if (emittedDeclarations.has(alias) || !declarations.has(alias)) {
+      return;
+    }
+
+    const declaration = declarations.get(alias);
+    for (const dependency of collectExpressionAliases(declaration.expression, declarations)) {
+      emitDeclaration(dependency);
+    }
+    output.push(declaration.line);
+    emittedDeclarations.add(alias);
+  }
+
+  const guardedEntries = new Map();
+  for (const entry of setEntries) {
+    for (const dependency of entry.dependencies) {
+      emitDeclaration(dependency);
+    }
+
+    if (entry.guard) {
+      if (!guardedEntries.has(entry.guard)) {
+        guardedEntries.set(entry.guard, []);
+      }
+      guardedEntries.get(entry.guard).push(entry.line);
+    } else {
+      output.push(entry.line);
+    }
+  }
+
+  for (const [guard, entries] of guardedEntries) {
+    output.push(`if (${guard}) {`);
+    for (const entry of entries) {
+      output.push(`  ${entry}`);
+    }
+    output.push('}');
+  }
+
+  return output.length > 0 ? output.join('\n') : null;
+}
+
+function cleanupConvertedScript(script) {
+  if (typeof script !== 'string' || !script) {
+    return script;
+  }
+
+  let cleaned = script;
+  cleaned = cleaned.replace(
+    /\n?\s*try\s*\{\s*\}\s*catch\s*\([^)]*\)\s*\{\s*(?:log\([^;]*\);?\s*)?\}/g,
+    ''
+  );
+  cleaned = cleaned.replace(/\n?\s*if\s*\([^)]*\)\s*\{\s*\}/g, '');
+  return cleaned.trim();
+}
+
 function convertPostmanScriptToRelampo(scriptLines = []) {
   if (!Array.isArray(scriptLines)) {
     return { script: null, removedPmLines: 0, invalidSyntax: false };
@@ -359,19 +709,7 @@ function convertPostmanScriptToRelampo(scriptLines = []) {
     return { script: null, removedPmLines: 0, invalidSyntax: false };
   }
 
-  const convertedLines = normalizedLines.map((line) => {
-    const setMatch = line.match(
-      /^(\s*)pm\.(environment|collectionVariables|variables)\.set\(\s*["']([^"']+)["']\s*,\s*(.+)\)\s*;?\s*$/
-    );
-    if (setMatch) {
-      const indent = setMatch[1] ?? '';
-      const variableName = setMatch[3];
-      const valueExpression = convertPostmanRuntimeRefs(setMatch[4].trim());
-      return `${indent}vars.set("${variableName}", ${valueExpression});`;
-    }
-
-    return convertPostmanRuntimeRefs(line);
-  });
+  const convertedLines = normalizedLines.map((line) => convertPostmanSetLineToVars(line) || convertPostmanRuntimeRefs(line));
 
   const sanitizedLines = [];
   let removedPmLines = 0;
@@ -390,7 +728,7 @@ function convertPostmanScriptToRelampo(scriptLines = []) {
     );
   }
 
-  const script = sanitizedLines.join('\n').trim();
+  const script = cleanupConvertedScript(sanitizedLines.join('\n').trim());
   if (script) {
     try {
       // Ensure we don't emit syntactically broken spark blocks after filtering Postman-only lines.
@@ -934,7 +1272,7 @@ function parseAssertionsFromLine(line, assertions, jsonAliases = new Set()) {
   return false;
 }
 
-function parseScriptArtifacts(events = [], context = {}) {
+function parseScriptArtifacts(events = [], context = {}, nativeExtracts = null) {
   if (!Array.isArray(events) || events.length === 0) {
     return { sparkScripts: null, assertionsList: null };
   }
@@ -960,6 +1298,9 @@ function parseScriptArtifacts(events = [], context = {}) {
 
     let insidePmTestWrapper = false;
     let pendingExpectLines = null;
+    const pathAliases = new Map();
+    const setterFunctions = new Map();
+    let activeSetterFunction = null;
 
     for (const line of lines) {
       if (isPostResponse && pendingExpectLines) {
@@ -974,21 +1315,33 @@ function parseScriptArtifacts(events = [], context = {}) {
         continue;
       }
 
-      const isJsonAliasLine = isPostResponse ? registerJsonAliasFromLine(line, jsonAliases) : false;
-
       if (isPostResponse) {
-        if (isJsonAliasLine) {
-          // Alias helpers like `const json = pm.response.json();` are only scaffolding for assertions.
+        registerJsonAliasFromLine(line, jsonAliases);
+        registerPathAliasFromLine(line, jsonAliases, pathAliases);
+
+        const functionStart = parseSetterFunctionStart(line);
+        if (functionStart) {
+          activeSetterFunction = functionStart;
+        }
+
+        const setCall = parsePostmanSetCall(line);
+        if (activeSetterFunction && setCall && setCall.expression === activeSetterFunction.parameter) {
+          setterFunctions.set(activeSetterFunction.name, {
+            variableName: setCall.variableName
+          });
+        }
+
+        if (isNativeExtractedSet(line, nativeExtracts, jsonAliases, pathAliases, setterFunctions)) {
           continue;
+        }
+
+        if (activeSetterFunction && /^\s*\}\s*;?\s*$/.test(line)) {
+          activeSetterFunction = null;
         }
       }
 
       if (isPostResponse && /^\s*pm\.test\(/.test(line)) {
         insidePmTestWrapper = true;
-        continue;
-      }
-
-      if (isPostResponse && EXTRACT_REGEX.test(line)) {
         continue;
       }
 
@@ -1021,16 +1374,26 @@ function parseScriptArtifacts(events = [], context = {}) {
       }
     }
 
+    let scriptNeedsManualReview = false;
+
     if (isPostResponse && unsupportedExpectCount > 0) {
       remainingLines.push(
         `// TODO: ${unsupportedExpectCount} unsupported Postman assertion pattern(s). Convert manually.`
       );
       if (context.stats) {
-        context.stats.scriptsNeedManualReview += unsupportedExpectCount;
+        context.stats.unsupportedAssertionPatterns += unsupportedExpectCount;
       }
+      scriptNeedsManualReview = true;
     }
 
-    const convertedScriptResult = convertPostmanScriptToRelampo(remainingLines);
+    const variableBridgeScript = isPostResponse ? buildPostmanVariableBridgeScript(lines, nativeExtracts) : null;
+    let convertedScriptResult = convertPostmanScriptToRelampo(remainingLines);
+    if (convertedScriptResult.invalidSyntax && variableBridgeScript) {
+      convertedScriptResult = {
+        ...convertedScriptResult,
+        script: `${variableBridgeScript}\n// TODO: Converted logic requires manual review (unsupported syntax after migration).`
+      };
+    }
     if (!convertedScriptResult.script) {
       continue;
     }
@@ -1044,8 +1407,14 @@ function parseScriptArtifacts(events = [], context = {}) {
 
     if (context.stats) {
       context.stats.sparkScripts += 1;
-      context.stats.scriptsNeedManualReview += convertedScriptResult.removedPmLines || 0;
+      context.stats.unsupportedPostmanApiLines += convertedScriptResult.removedPmLines || 0;
       if (convertedScriptResult.invalidSyntax) {
+        context.stats.invalidConvertedScripts += 1;
+      }
+      if (convertedScriptResult.removedPmLines > 0 || convertedScriptResult.invalidSyntax) {
+        scriptNeedsManualReview = true;
+      }
+      if (scriptNeedsManualReview) {
         context.stats.scriptsNeedManualReview += 1;
       }
     }
@@ -1092,7 +1461,7 @@ function mapRequestItemToStep(item, context = {}) {
   }
 
   if (context.variables) {
-    collectVariablesFromRequest(request, context.variables);
+    collectVariablesFromRequest(request, context.variables, context.referencedVariables);
     collectVariablesFromScriptEvents(item.event ?? [], context.variables);
     collectVariableEntries(item.variable ?? [], context.variables);
   }
@@ -1110,7 +1479,7 @@ function mapRequestItemToStep(item, context = {}) {
     }
   }
 
-  const { sparkScripts, assertionsList } = parseScriptArtifacts(item.event ?? [], context);
+  const { sparkScripts, assertionsList } = parseScriptArtifacts(item.event ?? [], context, extract);
   if (sparkScripts) {
     mappedRequest.spark = sparkScripts;
   }
@@ -1176,6 +1545,10 @@ function detectBaseURL(items = []) {
     }
 
     const rawURL = getRequestURL(item.request);
+    if (/{{\s*[^}]+\s*}}/.test(rawURL)) {
+      continue;
+    }
+
     try {
       const parsed = new URL(rawURL);
       if (parsed.protocol && parsed.host) {
@@ -1202,6 +1575,7 @@ export function convertPostmanJSONToPulseYAML(postmanText, customOptions = {}) {
   // Create context to track statistics
   const context = {
     variables: {},
+    referencedVariables: new Set(),
     stats: {
       requests: 0,
       extractors: 0,
@@ -1212,6 +1586,9 @@ export function convertPostmanJSONToPulseYAML(postmanText, customOptions = {}) {
       variables: 0,
       requestsWithAuth: 0,
       scriptsNeedManualReview: 0,
+      unsupportedAssertionPatterns: 0,
+      unsupportedPostmanApiLines: 0,
+      invalidConvertedScripts: 0,
       hasCollectionAuth: false,
     }
   };
@@ -1257,7 +1634,7 @@ export function convertPostmanJSONToPulseYAML(postmanText, customOptions = {}) {
     apiScenarioManager.http_defaults.base_url = baseURL;
   }
 
-  const cleanedVariables = pruneEmptyVariables(apiScenarioManager.variables);
+  const cleanedVariables = pruneEmptyVariables(apiScenarioManager.variables, context.referencedVariables);
   context.stats.variables = Object.keys(cleanedVariables).length;
   if (context.stats.variables > 0) {
     apiScenarioManager.variables = cleanedVariables;
@@ -1282,7 +1659,7 @@ export function convertPostmanJSONToPulseYAML(postmanText, customOptions = {}) {
 # - Extractors: ${context.stats.extractors}
 # - Assertions: ${context.stats.assertions}
 # - Custom Assertions: ${context.stats.customAssertions}
-# - Spark Scripts: ${context.stats.sparkScripts}
+# - Spark Logic Blocks: ${context.stats.sparkScripts}
 # - User Variables: ${context.stats.variables}
 `;
 
@@ -1296,7 +1673,22 @@ export function convertPostmanJSONToPulseYAML(postmanText, customOptions = {}) {
   }
   if (context.stats.scriptsNeedManualReview > 0) {
     limitations.push(
-      `Postman script APIs in ${context.stats.scriptsNeedManualReview} script${context.stats.scriptsNeedManualReview > 1 ? 's may' : ' may'} require manual adjustment`
+      `${context.stats.scriptsNeedManualReview} Postman logic block${context.stats.scriptsNeedManualReview > 1 ? 's' : ''} may require manual review`
+    );
+  }
+  if (context.stats.unsupportedAssertionPatterns > 0) {
+    limitations.push(
+      `${context.stats.unsupportedAssertionPatterns} unsupported Postman assertion pattern${context.stats.unsupportedAssertionPatterns > 1 ? 's were' : ' was'} left as TODO comments`
+    );
+  }
+  if (context.stats.unsupportedPostmanApiLines > 0) {
+    limitations.push(
+      `${context.stats.unsupportedPostmanApiLines} unsupported Postman API line${context.stats.unsupportedPostmanApiLines > 1 ? 's were' : ' was'} removed from converted logic`
+    );
+  }
+  if (context.stats.invalidConvertedScripts > 0) {
+    limitations.push(
+      `${context.stats.invalidConvertedScripts} converted logic block${context.stats.invalidConvertedScripts > 1 ? 's have' : ' has'} unsupported syntax and need manual rewrite`
     );
   }
   if (context.stats.customAssertions > 0) {
