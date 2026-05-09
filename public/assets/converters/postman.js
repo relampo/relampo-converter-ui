@@ -64,7 +64,36 @@ function getRequestURL(request) {
   return '';
 }
 
+function isBaseURLTemplateName(name) {
+  return /^(base_?url|api_?url|host|domain)$/i.test(name);
+}
+
+function parseTemplatedBaseURL(raw) {
+  if (typeof raw !== 'string') {
+    return null;
+  }
+
+  const match = raw.trim().match(/^\/?({{\s*([A-Za-z_][\w.-]*)\s*}})(?=\/|\?|#|$)([\s\S]*)$/);
+  if (!match || !isBaseURLTemplateName(match[2])) {
+    return null;
+  }
+
+  const variableName = match[2];
+  const tail = match[3] || '';
+  const path = !tail || tail.startsWith('?') || tail.startsWith('#') ? `/${tail}` : tail;
+
+  return {
+    baseURL: `{{${variableName}}}`,
+    path
+  };
+}
+
 function normalizeURL(raw) {
+  const templatedBase = parseTemplatedBaseURL(raw);
+  if (templatedBase) {
+    return templatedBase.path;
+  }
+
   if (typeof raw === 'string' && /{{\s*[^}]+\s*}}/.test(raw)) {
     return raw;
   }
@@ -271,7 +300,21 @@ function parseExtract(events = []) {
     }
   }
 
-  return Object.keys(extracts).length > 0 ? extracts : null;
+  if (Object.keys(extracts).length === 0) {
+    return null;
+  }
+
+  return {
+    map: extracts,
+    items: Object.entries(extracts).map(([variableName, path]) => ({
+      type: 'jsonpath',
+      from: 'body',
+      var: variableName,
+      variable: variableName,
+      path,
+      default: ''
+    }))
+  };
 }
 
 function normalizeVariableValue(value) {
@@ -1468,18 +1511,18 @@ function mapRequestItemToStep(item, context = {}) {
 
   const extract = parseExtract(item.event ?? []);
   if (extract) {
-    mappedRequest.extract = extract;
+    mappedRequest.extractors = extract.items;
     if (context.stats) {
-      context.stats.extractors += Object.keys(extract).length;
+      context.stats.extractors += extract.items.length;
     }
     if (context.variables) {
-      for (const variableName of Object.keys(extract)) {
+      for (const variableName of Object.keys(extract.map)) {
         setVariable(context.variables, variableName, context.variables[variableName] ?? '');
       }
     }
   }
 
-  const { sparkScripts, assertionsList } = parseScriptArtifacts(item.event ?? [], context, extract);
+  const { sparkScripts, assertionsList } = parseScriptArtifacts(item.event ?? [], context, extract?.map ?? null);
   if (sparkScripts) {
     mappedRequest.spark = sparkScripts;
   }
@@ -1545,6 +1588,11 @@ function detectBaseURL(items = []) {
     }
 
     const rawURL = getRequestURL(item.request);
+    const templatedBase = parseTemplatedBaseURL(rawURL);
+    if (templatedBase) {
+      return templatedBase.baseURL;
+    }
+
     if (/{{\s*[^}]+\s*}}/.test(rawURL)) {
       continue;
     }
@@ -1630,7 +1678,12 @@ export function convertPostmanJSONToPulseYAML(postmanText, customOptions = {}) {
 
   const baseURL = detectBaseURL(collection?.item ?? []);
   if (baseURL) {
-    setVariable(apiScenarioManager.variables, 'base_url', baseURL);
+    const templatedBaseURL = baseURL.match(/^{{\s*([A-Za-z_][\w.-]*)\s*}}$/);
+    if (templatedBaseURL) {
+      setVariable(apiScenarioManager.variables, templatedBaseURL[1], apiScenarioManager.variables[templatedBaseURL[1]] ?? '');
+    } else {
+      setVariable(apiScenarioManager.variables, 'base_url', baseURL);
+    }
     apiScenarioManager.http_defaults.base_url = baseURL;
   }
 
