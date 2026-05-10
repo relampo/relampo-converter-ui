@@ -639,7 +639,7 @@ function convertPostmanRuntimeRefs(code) {
   let converted = code;
   converted = converted.replace(
     /pm\.(environment|collectionVariables|variables)\.get\(\s*["']([^"']+)["']\s*\)/g,
-    'vars.get("$2")'
+    (_match, _scope, variableName) => renderVarsRead(variableName)
   );
   converted = converted.replace(/pm\.response\.json\(\)/g, 'JSON.parse(response.body)');
   converted = converted.replace(/pm\.response\.text\(\)/g, 'response.body');
@@ -649,6 +649,18 @@ function convertPostmanRuntimeRefs(code) {
   converted = converted.replace(/pm\.expect\.fail\(\s*([^)]+?)\s*\)\s*;?/g, 'throw new Error($1);');
   converted = converted.replace(/console\.(?:log|warn|error)\(/g, 'log(');
   return converted;
+}
+
+function renderVarsRead(variableName) {
+  if (isValidVariableName(variableName)) {
+    return `vars.${variableName}`;
+  }
+
+  return `vars[${JSON.stringify(variableName)}]`;
+}
+
+function renderVarsWrite(variableName, valueExpression) {
+  return `${renderVarsRead(variableName)} = ${valueExpression};`;
 }
 
 function convertPostmanSetLineToVars(line) {
@@ -662,7 +674,7 @@ function convertPostmanSetLineToVars(line) {
   const indent = setMatch[1] ?? '';
   const variableName = setMatch[3];
   const valueExpression = convertPostmanRuntimeRefs(setMatch[4].trim());
-  return `${indent}vars.set("${variableName}", ${valueExpression});`;
+  return `${indent}${renderVarsWrite(variableName, valueExpression)}`;
 }
 
 function parseVariableDeclaration(line) {
@@ -703,7 +715,37 @@ function collectExpressionAliases(expression, declarations) {
   return aliases;
 }
 
-function renderVariableDeclaration(declaration) {
+function buildSafeJsonAliasReadExpression(expression, jsonAliases) {
+  if (typeof expression !== 'string' || !jsonAliases) {
+    return null;
+  }
+
+  const fallbackParts = expression.trim().replace(/;$/, '').split(/\s+\|\|\s+/);
+  const primaryExpression = fallbackParts[0]?.trim();
+  if (!primaryExpression || /\.find\s*\(/.test(primaryExpression)) {
+    return null;
+  }
+
+  const compact = primaryExpression.replace(/\s+/g, '');
+  const aliasMatch = compact.match(/^([A-Za-z_$][\w$]*)([\s\S]*)$/);
+  if (!aliasMatch || !jsonAliases.has(aliasMatch[1]) || !aliasMatch[2]) {
+    return null;
+  }
+
+  const path = normalizeJsonAccessorToPath(aliasMatch[2]);
+  const safeRead = renderSafeJsonPathRead(aliasMatch[1], path);
+  if (!safeRead) {
+    return null;
+  }
+
+  if (fallbackParts.length > 1) {
+    return `${safeRead} || ${fallbackParts.slice(1).join(' || ').trim()}`;
+  }
+
+  return safeRead;
+}
+
+function renderVariableDeclaration(declaration, jsonAliases = null) {
   if (!declaration) {
     return [];
   }
@@ -717,6 +759,11 @@ function renderVariableDeclaration(declaration) {
       '  log("Unable to parse response body as JSON.");',
       '}'
     ];
+  }
+
+  const safeExpression = buildSafeJsonAliasReadExpression(declaration.expression, jsonAliases);
+  if (safeExpression) {
+    return [`${declaration.kind} ${declaration.name} = ${safeExpression};`];
   }
 
   return [declaration.line];
@@ -804,7 +851,7 @@ function renderSafeJsonPathSet(variableName, path, responseJsonVariable, indent 
     `${indent}{`,
     `${indent}  const extractedValue = ${safeRead};`,
     `${indent}  if (extractedValue !== undefined && extractedValue !== null) {`,
-    `${indent}    vars.set("${variableName}", extractedValue);`,
+    `${indent}    ${renderVarsWrite(variableName, 'extractedValue')}`,
     `${indent}  } else {`,
     `${indent}    log("Unable to set ${variableName} from response.");`,
     `${indent}  }`,
@@ -813,7 +860,10 @@ function renderSafeJsonPathSet(variableName, path, responseJsonVariable, indent 
 }
 
 function renderSafeVarsSetLine(line, indent = '') {
-  const variableName = line.match(/vars\.set\(\s*["']([^"']+)["']/)?.[1] || 'variable';
+  const variableName = line.match(/vars\.([A-Za-z_$][\w$]*)\s*=/)?.[1]
+    || line.match(/vars\[\s*["']([^"']+)["']\s*\]\s*=/)?.[1]
+    || line.match(/vars\.set\(\s*["']([^"']+)["']/)?.[1]
+    || 'variable';
   return [
     `${indent}try {`,
     `${indent}  ${line}`,
@@ -898,7 +948,7 @@ function buildPostmanVariableBridgeScript(lines = [], nativeExtracts = null) {
     const guard = [...dependencies].find((alias) => findAliases.has(alias)) || null;
     const path = buildJsonPathFromPostmanSource(setterInvocation.expression, jsonAliases, pathAliases);
     setEntries.push({
-      line: `vars.set("${setterInvocation.variableName}", ${convertedExpression});`,
+      line: renderVarsWrite(setterInvocation.variableName, convertedExpression),
       variableName: setterInvocation.variableName,
       path,
       dependencies,
@@ -932,7 +982,7 @@ function buildPostmanVariableBridgeScript(lines = [], nativeExtracts = null) {
     for (const dependency of collectExpressionAliases(declaration.expression, declarations)) {
       emitDeclaration(dependency);
     }
-    output.push(...renderVariableDeclaration(declaration));
+    output.push(...renderVariableDeclaration(declaration, jsonAliases));
     emittedDeclarations.add(alias);
   }
 
