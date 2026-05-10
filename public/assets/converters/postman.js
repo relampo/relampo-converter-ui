@@ -252,6 +252,79 @@ function isNativeExtractedSet(line, nativeExtracts, jsonAliases, pathAliases, se
   return Boolean(setterCall && nativeExtracts[setterCall.variableName] === setterCall.path);
 }
 
+function findNativeExtractedSetterLines(lines = [], nativeExtracts = null) {
+  const skippedLines = new Set();
+  if (!nativeExtracts || typeof nativeExtracts !== 'object' || !Array.isArray(lines)) {
+    return skippedLines;
+  }
+
+  const functions = new Map();
+  let activeFunction = null;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const functionStart = parseSetterFunctionStart(line);
+    if (functionStart) {
+      activeFunction = {
+        name: functionStart.name,
+        parameter: functionStart.parameter,
+        start: index,
+        end: index,
+        variableName: null
+      };
+      continue;
+    }
+
+    if (!activeFunction) {
+      continue;
+    }
+
+    activeFunction.end = index;
+    const setCall = parsePostmanSetCall(line);
+    if (setCall && setCall.expression === activeFunction.parameter && nativeExtracts[setCall.variableName]) {
+      activeFunction.variableName = setCall.variableName;
+    }
+
+    if (/^\s*\}\s*;?\s*$/.test(line)) {
+      if (activeFunction.variableName) {
+        functions.set(activeFunction.name, activeFunction);
+      }
+      activeFunction = null;
+    }
+  }
+
+  if (functions.size === 0) {
+    return skippedLines;
+  }
+
+  const jsonAliases = new Set();
+  const pathAliases = new Map();
+  const setterFunctions = new Map(
+    [...functions].map(([name, fn]) => [name, { variableName: fn.variableName }])
+  );
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    registerJsonAliasFromLine(line, jsonAliases);
+    registerPathAliasFromLine(line, jsonAliases, pathAliases);
+
+    const setterCall = parseSetterFunctionCall(line, setterFunctions, jsonAliases, pathAliases);
+    if (!setterCall || nativeExtracts[setterCall.variableName] !== setterCall.path) {
+      continue;
+    }
+
+    skippedLines.add(index);
+    const functionInfo = functions.get(line.match(/^\s*([A-Za-z_$][\w$]*)\(/)?.[1]);
+    if (functionInfo) {
+      for (let skippedIndex = functionInfo.start; skippedIndex <= functionInfo.end; skippedIndex += 1) {
+        skippedLines.add(skippedIndex);
+      }
+    }
+  }
+
+  return skippedLines;
+}
+
 function parseExtract(events = []) {
   const extracts = {};
 
@@ -307,11 +380,12 @@ function parseExtract(events = []) {
   return {
     map: extracts,
     items: Object.entries(extracts).map(([variableName, path]) => ({
-      type: 'jsonpath',
+      type: 'json',
       from: 'body',
       var: variableName,
       variable: variableName,
-      path,
+      jsonpath_expression: path,
+      match_no: 1,
       default: ''
     }))
   };
@@ -656,6 +730,7 @@ function buildPostmanVariableBridgeScript(lines = [], nativeExtracts = null) {
       setterFunctions.set(activeSetterFunction.name, {
         variableName: setCall.variableName
       });
+      continue;
     }
 
     if (activeSetterFunction && /^\s*\}\s*;?\s*$/.test(line)) {
@@ -1338,6 +1413,9 @@ function parseScriptArtifacts(events = [], context = {}, nativeExtracts = null) 
     const lines = event.script.exec.filter((line) => typeof line === 'string');
     const remainingLines = [];
     let unsupportedExpectCount = 0;
+    const nativeExtractedSetterLines = isPostResponse
+      ? findNativeExtractedSetterLines(lines, nativeExtracts)
+      : new Set();
 
     let insidePmTestWrapper = false;
     let pendingExpectLines = null;
@@ -1345,7 +1423,8 @@ function parseScriptArtifacts(events = [], context = {}, nativeExtracts = null) 
     const setterFunctions = new Map();
     let activeSetterFunction = null;
 
-    for (const line of lines) {
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      const line = lines[lineIndex];
       if (isPostResponse && pendingExpectLines) {
         pendingExpectLines.push(line);
         if (/;\s*$/.test(line.trim())) {
@@ -1355,6 +1434,10 @@ function parseScriptArtifacts(events = [], context = {}, nativeExtracts = null) 
             unsupportedExpectCount += 1;
           }
         }
+        continue;
+      }
+
+      if (nativeExtractedSetterLines.has(lineIndex)) {
         continue;
       }
 
