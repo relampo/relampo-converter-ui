@@ -1,6 +1,6 @@
 import hljs from 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/highlight.min.js';
 import yaml from 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/languages/yaml.min.js';
-import { convertContent } from './helpers/conversion.js?v=relampo-vars-native-v2';
+import { convertContent } from './helpers/conversion.js?v=postman-vars-set-runtime-v3';
 import { buildSuggestedFileName, getFileExtension, isSupportedInputExtension } from './helpers/file.js';
 import { createToastNotifier } from './helpers/toast.js';
 import { displayValidation, validateYaml } from './helpers/validation.js';

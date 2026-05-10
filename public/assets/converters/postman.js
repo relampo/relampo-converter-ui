@@ -639,7 +639,7 @@ function convertPostmanRuntimeRefs(code) {
   let converted = code;
   converted = converted.replace(
     /pm\.(environment|collectionVariables|variables)\.get\(\s*["']([^"']+)["']\s*\)/g,
-    (_match, _scope, variableName) => renderVarsRead(variableName)
+    'vars.get("$2")'
   );
   converted = converted.replace(/pm\.response\.json\(\)/g, 'JSON.parse(response.body)');
   converted = converted.replace(/pm\.response\.text\(\)/g, 'response.body');
@@ -652,15 +652,11 @@ function convertPostmanRuntimeRefs(code) {
 }
 
 function renderVarsRead(variableName) {
-  if (isValidVariableName(variableName)) {
-    return `vars.${variableName}`;
-  }
-
-  return `vars[${JSON.stringify(variableName)}]`;
+  return `vars.get(${JSON.stringify(variableName)})`;
 }
 
 function renderVarsWrite(variableName, valueExpression) {
-  return `${renderVarsRead(variableName)} = ${valueExpression};`;
+  return `vars.set(${JSON.stringify(variableName)}, ${valueExpression});`;
 }
 
 function convertPostmanSetLineToVars(line) {
