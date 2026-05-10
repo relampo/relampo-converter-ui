@@ -1855,7 +1855,7 @@ export function convertPostmanJSONToPulseYAML(postmanText, customOptions = {}) {
 # CONVERSION STATS:
 # - HTTP Requests: ${context.stats.requests}
 # - Folders/Groups: ${context.stats.folders}
-# - Spark Variable Extracts: ${context.stats.extractors}
+# - Response Variables: ${context.stats.extractors}
 # - Assertions: ${context.stats.assertions}
 # - Custom Assertions: ${context.stats.customAssertions}
 # - Spark Logic Blocks: ${context.stats.sparkScripts}
