@@ -1,5 +1,5 @@
-import { convertPostmanJSONToPulseYAML } from '../converters/postman.js';
-import { convertJMXToPulseYAML } from '../converters/jmx.js';
+import { convertPostmanJSONToPulseYAML } from '../converters/postman.js?v=relampo-vars-native';
+import { convertJMXToPulseYAML } from '../converters/jmx.js?v=relampo-vars-native';
 
 export function convertContent(fileText, extension) {
   if (extension === 'json') {
