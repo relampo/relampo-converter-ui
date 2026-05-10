@@ -722,6 +722,96 @@ function renderVariableDeclaration(declaration) {
   return [declaration.line];
 }
 
+function parseJsonPathAccessors(path) {
+  if (typeof path !== 'string' || !path.startsWith('$')) {
+    return null;
+  }
+
+  const accessors = [];
+  let index = 1;
+
+  while (index < path.length) {
+    if (path[index] === '.') {
+      const match = path.slice(index + 1).match(/^([A-Za-z_$][\w$]*)/);
+      if (!match) {
+        return null;
+      }
+      accessors.push({ type: 'property', value: match[1] });
+      index += match[1].length + 1;
+      continue;
+    }
+
+    if (path[index] === '[') {
+      const match = path.slice(index).match(/^\[(\d+)\]/);
+      if (!match) {
+        return null;
+      }
+      accessors.push({ type: 'index', value: Number(match[1]) });
+      index += match[0].length;
+      continue;
+    }
+
+    return null;
+  }
+
+  return accessors;
+}
+
+function renderAccessChain(root, accessors, count = accessors.length) {
+  let expression = root;
+  for (const accessor of accessors.slice(0, count)) {
+    expression += accessor.type === 'property' ? `.${accessor.value}` : `[${accessor.value}]`;
+  }
+  return expression;
+}
+
+function renderSafeJsonPathRead(root, path) {
+  const accessors = parseJsonPathAccessors(path);
+  if (!accessors) {
+    return null;
+  }
+
+  if (accessors.length === 0) {
+    return root;
+  }
+
+  const guards = [root];
+  for (let index = 1; index < accessors.length; index += 1) {
+    guards.push(renderAccessChain(root, accessors, index));
+  }
+
+  return `(${guards.join(' && ')} ? ${renderAccessChain(root, accessors)} : undefined)`;
+}
+
+function renderResponseJsonDeclaration(variableName) {
+  return [
+    `let ${variableName} = null;`,
+    'try {',
+    `  ${variableName} = response.body ? JSON.parse(response.body) : null;`,
+    '} catch (err) {',
+    '  log("Unable to parse response body as JSON.");',
+    '}'
+  ];
+}
+
+function renderSafeJsonPathSet(variableName, path, responseJsonVariable, indent = '') {
+  const safeRead = renderSafeJsonPathRead(responseJsonVariable, path);
+  if (!safeRead) {
+    return null;
+  }
+
+  return [
+    `${indent}{`,
+    `${indent}  const extractedValue = ${safeRead};`,
+    `${indent}  if (extractedValue !== undefined && extractedValue !== null) {`,
+    `${indent}    vars.set("${variableName}", extractedValue);`,
+    `${indent}  } else {`,
+    `${indent}    log("Unable to set ${variableName} from response.");`,
+    `${indent}  }`,
+    `${indent}}`
+  ];
+}
+
 function renderSafeVarsSetLine(line, indent = '') {
   const variableName = line.match(/vars\.set\(\s*["']([^"']+)["']/)?.[1] || 'variable';
   return [
@@ -781,10 +871,13 @@ function buildPostmanVariableBridgeScript(lines = [], nativeExtracts = null) {
         continue;
       }
 
+      const path = buildJsonPathFromPostmanSource(setCall.expression, jsonAliases, pathAliases);
       const dependencies = collectExpressionAliases(setCall.expression, declarations);
       const guard = [...dependencies].find((alias) => findAliases.has(alias)) || null;
       setEntries.push({
         line: convertedSetLine.trim(),
+        variableName: setCall.variableName,
+        path,
         dependencies,
         guard
       });
@@ -803,8 +896,11 @@ function buildPostmanVariableBridgeScript(lines = [], nativeExtracts = null) {
 
     const dependencies = collectExpressionAliases(setterInvocation.expression, declarations);
     const guard = [...dependencies].find((alias) => findAliases.has(alias)) || null;
+    const path = buildJsonPathFromPostmanSource(setterInvocation.expression, jsonAliases, pathAliases);
     setEntries.push({
       line: `vars.set("${setterInvocation.variableName}", ${convertedExpression});`,
+      variableName: setterInvocation.variableName,
+      path,
       dependencies,
       guard
     });
@@ -816,6 +912,16 @@ function buildPostmanVariableBridgeScript(lines = [], nativeExtracts = null) {
 
   const output = [];
   const emittedDeclarations = new Set();
+  const responseJsonVariable = '_relampoResponseJson';
+  let emittedResponseJsonDeclaration = false;
+
+  function emitResponseJsonDeclaration() {
+    if (emittedResponseJsonDeclaration) {
+      return;
+    }
+    output.push(...renderResponseJsonDeclaration(responseJsonVariable));
+    emittedResponseJsonDeclaration = true;
+  }
 
   function emitDeclaration(alias) {
     if (emittedDeclarations.has(alias) || !declarations.has(alias)) {
@@ -832,6 +938,13 @@ function buildPostmanVariableBridgeScript(lines = [], nativeExtracts = null) {
 
   const guardedEntries = new Map();
   for (const entry of setEntries) {
+    if (entry.path) {
+      emitResponseJsonDeclaration();
+      const safeJsonPathSet = renderSafeJsonPathSet(entry.variableName, entry.path, responseJsonVariable);
+      output.push(...(safeJsonPathSet || renderSafeVarsSetLine(entry.line)));
+      continue;
+    }
+
     for (const dependency of entry.dependencies) {
       emitDeclaration(dependency);
     }
@@ -887,10 +1000,25 @@ function wrapPostResponseScript(script) {
     return script;
   }
 
+  const parsesResponseBody = /JSON\.parse\(\s*response\.body\s*\)/.test(script);
   const indented = script
     .split('\n')
-    .map((line) => (line ? `  ${line}` : line))
+    .map((line) => (line ? `${parsesResponseBody ? '    ' : '  '}${line}` : line))
     .join('\n');
+
+  if (parsesResponseBody) {
+    return [
+      'if (response.body) {',
+      '  try {',
+      indented,
+      '  } catch (err) {',
+      '    log("Post-response logic failed: " + (err.message || err));',
+      '  }',
+      '} else {',
+      '  log("Post-response logic skipped because response body is empty.");',
+      '}'
+    ].join('\n');
+  }
 
   return [
     'try {',
