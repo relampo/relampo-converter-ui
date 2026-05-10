@@ -237,6 +237,22 @@ function parseSetterFunctionCall(line, setterFunctions, jsonAliases, pathAliases
   };
 }
 
+function parseSetterFunctionInvocation(line, setterFunctions) {
+  if (typeof line !== 'string' || !setterFunctions) {
+    return null;
+  }
+
+  const match = line.match(/^\s*([A-Za-z_$][\w$]*)\(\s*([\s\S]+?)\s*\)\s*;?\s*$/);
+  if (!match || !setterFunctions.has(match[1])) {
+    return null;
+  }
+
+  return {
+    variableName: setterFunctions.get(match[1]).variableName,
+    expression: match[2].trim()
+  };
+}
+
 function isNativeExtractedSet(line, nativeExtracts, jsonAliases, pathAliases, setterFunctions) {
   if (!nativeExtracts || typeof nativeExtracts !== 'object') {
     return false;
@@ -379,15 +395,7 @@ function parseExtract(events = []) {
 
   return {
     map: extracts,
-    items: Object.entries(extracts).map(([variableName, path]) => ({
-      type: 'json',
-      from: 'body',
-      var: variableName,
-      variable: variableName,
-      jsonpath_expression: path,
-      match_no: 1,
-      default: ''
-    }))
+    items: []
   };
 }
 
@@ -737,19 +745,36 @@ function buildPostmanVariableBridgeScript(lines = [], nativeExtracts = null) {
       activeSetterFunction = null;
     }
 
-    if (!setCall || isNativeExtractedSet(line, nativeExtracts, jsonAliases, pathAliases, setterFunctions)) {
+    if (setCall) {
+      const convertedSetLine = convertPostmanSetLineToVars(line);
+      if (!convertedSetLine || /\bpm\./.test(convertedSetLine)) {
+        continue;
+      }
+
+      const dependencies = collectExpressionAliases(setCall.expression, declarations);
+      const guard = [...dependencies].find((alias) => findAliases.has(alias)) || null;
+      setEntries.push({
+        line: convertedSetLine.trim(),
+        dependencies,
+        guard
+      });
       continue;
     }
 
-    const convertedSetLine = convertPostmanSetLineToVars(line);
-    if (!convertedSetLine || /\bpm\./.test(convertedSetLine)) {
+    const setterInvocation = parseSetterFunctionInvocation(line, setterFunctions);
+    if (!setterInvocation) {
       continue;
     }
 
-    const dependencies = collectExpressionAliases(setCall.expression, declarations);
+    const convertedExpression = convertPostmanRuntimeRefs(setterInvocation.expression);
+    if (/\bpm\./.test(convertedExpression)) {
+      continue;
+    }
+
+    const dependencies = collectExpressionAliases(setterInvocation.expression, declarations);
     const guard = [...dependencies].find((alias) => findAliases.has(alias)) || null;
     setEntries.push({
-      line: convertedSetLine.trim(),
+      line: `vars.set("${setterInvocation.variableName}", ${convertedExpression});`,
       dependencies,
       guard
     });
@@ -814,6 +839,40 @@ function cleanupConvertedScript(script) {
   );
   cleaned = cleaned.replace(/\n?\s*if\s*\([^)]*\)\s*\{\s*\}/g, '');
   return cleaned.trim();
+}
+
+function mergeVariableBridgeScript(variableBridgeScript, convertedScript) {
+  if (!variableBridgeScript) {
+    return convertedScript;
+  }
+  if (!convertedScript) {
+    return variableBridgeScript;
+  }
+
+  let usesExistingDeclaration = false;
+  const filteredBridgeLines = variableBridgeScript.split('\n').filter((line) => {
+    const declaration = line.match(/^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/);
+    if (!declaration) {
+      return true;
+    }
+
+    const declarationRegex = new RegExp(`\\b(?:const|let|var)\\s+${declaration[1]}\\s*=`);
+    if (!declarationRegex.test(convertedScript)) {
+      return true;
+    }
+
+    usesExistingDeclaration = true;
+    return false;
+  });
+
+  const filteredBridgeScript = filteredBridgeLines.join('\n').trim();
+  if (!filteredBridgeScript) {
+    return convertedScript;
+  }
+
+  return usesExistingDeclaration
+    ? `${convertedScript}\n${filteredBridgeScript}`
+    : `${filteredBridgeScript}\n${convertedScript}`;
 }
 
 function convertPostmanScriptToRelampo(scriptLines = []) {
@@ -1519,6 +1578,11 @@ function parseScriptArtifacts(events = [], context = {}, nativeExtracts = null) 
         ...convertedScriptResult,
         script: `${variableBridgeScript}\n// TODO: Converted logic requires manual review (unsupported syntax after migration).`
       };
+    } else if (variableBridgeScript) {
+      convertedScriptResult = {
+        ...convertedScriptResult,
+        script: mergeVariableBridgeScript(variableBridgeScript, convertedScriptResult.script)
+      };
     }
     if (!convertedScriptResult.script) {
       continue;
@@ -1594,9 +1658,8 @@ function mapRequestItemToStep(item, context = {}) {
 
   const extract = parseExtract(item.event ?? []);
   if (extract) {
-    mappedRequest.extractors = extract.items;
     if (context.stats) {
-      context.stats.extractors += extract.items.length;
+      context.stats.extractors += Object.keys(extract.map).length;
     }
     if (context.variables) {
       for (const variableName of Object.keys(extract.map)) {
@@ -1792,7 +1855,7 @@ export function convertPostmanJSONToPulseYAML(postmanText, customOptions = {}) {
 # CONVERSION STATS:
 # - HTTP Requests: ${context.stats.requests}
 # - Folders/Groups: ${context.stats.folders}
-# - Extractors: ${context.stats.extractors}
+# - Spark Variable Extracts: ${context.stats.extractors}
 # - Assertions: ${context.stats.assertions}
 # - Custom Assertions: ${context.stats.customAssertions}
 # - Spark Logic Blocks: ${context.stats.sparkScripts}

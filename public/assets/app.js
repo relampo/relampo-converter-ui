@@ -421,7 +421,7 @@ function analyzeConversionSummary( yamlContent ) {
       const requestsMatch = line.match( /# - HTTP Requests: (\d+)/ );
       if ( requestsMatch ) summary.requests = parseInt( requestsMatch[ 1 ] );
       
-      const extractorsMatch = line.match( /# - Extractors[^:]*: (\d+)/ );
+      const extractorsMatch = line.match( /# - (?:Extractors|Spark Variable Extracts)[^:]*: (\d+)/ );
       if ( extractorsMatch ) summary.extractors = parseInt( extractorsMatch[ 1 ] );
       
       const assertionsMatch = line.match( /# - Assertions: (\d+)/ );
@@ -509,7 +509,7 @@ function displayConversionSummary( summary ) {
   // Build converted elements list (numbers only, but still render safely)
   const convertedItems = [];
   if ( summary.requests > 0 ) convertedItems.push( `${ summary.requests } HTTP Requests` );
-  if ( summary.extractors > 0 ) convertedItems.push( `${ summary.extractors } Extractors` );
+  if ( summary.extractors > 0 ) convertedItems.push( `${ summary.extractors } Spark Variable Extracts` );
   if ( summary.assertions > 0 ) convertedItems.push( `${ summary.assertions } Assertions` );
   if ( summary.sparkScripts > 0 ) convertedItems.push( `${ summary.sparkScripts } Spark Logic Blocks` );
   if ( summary.variables > 0 ) convertedItems.push( `${ summary.variables } User Variables` );
