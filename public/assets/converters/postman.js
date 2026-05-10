@@ -703,6 +703,36 @@ function collectExpressionAliases(expression, declarations) {
   return aliases;
 }
 
+function renderVariableDeclaration(declaration) {
+  if (!declaration) {
+    return [];
+  }
+
+  if (declaration.expression === 'JSON.parse(response.body)') {
+    return [
+      `let ${declaration.name} = null;`,
+      'try {',
+      `  ${declaration.name} = response.body ? JSON.parse(response.body) : null;`,
+      '} catch (err) {',
+      '  log("Unable to parse response body as JSON.");',
+      '}'
+    ];
+  }
+
+  return [declaration.line];
+}
+
+function renderSafeVarsSetLine(line, indent = '') {
+  const variableName = line.match(/vars\.set\(\s*["']([^"']+)["']/)?.[1] || 'variable';
+  return [
+    `${indent}try {`,
+    `${indent}  ${line}`,
+    `${indent}} catch (err) {`,
+    `${indent}  log("Unable to set ${variableName} from response.");`,
+    `${indent}}`
+  ];
+}
+
 function buildPostmanVariableBridgeScript(lines = [], nativeExtracts = null) {
   if (!Array.isArray(lines) || lines.length === 0) {
     return null;
@@ -796,7 +826,7 @@ function buildPostmanVariableBridgeScript(lines = [], nativeExtracts = null) {
     for (const dependency of collectExpressionAliases(declaration.expression, declarations)) {
       emitDeclaration(dependency);
     }
-    output.push(declaration.line);
+    output.push(...renderVariableDeclaration(declaration));
     emittedDeclarations.add(alias);
   }
 
@@ -812,14 +842,14 @@ function buildPostmanVariableBridgeScript(lines = [], nativeExtracts = null) {
       }
       guardedEntries.get(entry.guard).push(entry.line);
     } else {
-      output.push(entry.line);
+      output.push(...renderSafeVarsSetLine(entry.line));
     }
   }
 
   for (const [guard, entries] of guardedEntries) {
     output.push(`if (${guard}) {`);
     for (const entry of entries) {
-      output.push(`  ${entry}`);
+      output.push(...renderSafeVarsSetLine(entry, '  '));
     }
     output.push('}');
   }
@@ -849,30 +879,26 @@ function mergeVariableBridgeScript(variableBridgeScript, convertedScript) {
     return variableBridgeScript;
   }
 
-  let usesExistingDeclaration = false;
-  const filteredBridgeLines = variableBridgeScript.split('\n').filter((line) => {
-    const declaration = line.match(/^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/);
-    if (!declaration) {
-      return true;
-    }
+  return `${variableBridgeScript}\n${convertedScript}`;
+}
 
-    const declarationRegex = new RegExp(`\\b(?:const|let|var)\\s+${declaration[1]}\\s*=`);
-    if (!declarationRegex.test(convertedScript)) {
-      return true;
-    }
-
-    usesExistingDeclaration = true;
-    return false;
-  });
-
-  const filteredBridgeScript = filteredBridgeLines.join('\n').trim();
-  if (!filteredBridgeScript) {
-    return convertedScript;
+function wrapPostResponseScript(script) {
+  if (typeof script !== 'string' || !script.trim()) {
+    return script;
   }
 
-  return usesExistingDeclaration
-    ? `${convertedScript}\n${filteredBridgeScript}`
-    : `${filteredBridgeScript}\n${convertedScript}`;
+  const indented = script
+    .split('\n')
+    .map((line) => (line ? `  ${line}` : line))
+    .join('\n');
+
+  return [
+    'try {',
+    indented,
+    '} catch (err) {',
+    '  log("Post-response logic failed: " + (err.message || err));',
+    '}'
+  ].join('\n');
 }
 
 function convertPostmanScriptToRelampo(scriptLines = []) {
@@ -1581,7 +1607,15 @@ function parseScriptArtifacts(events = [], context = {}, nativeExtracts = null) 
     } else if (variableBridgeScript) {
       convertedScriptResult = {
         ...convertedScriptResult,
-        script: mergeVariableBridgeScript(variableBridgeScript, convertedScriptResult.script)
+        script: mergeVariableBridgeScript(
+          variableBridgeScript,
+          isPostResponse ? wrapPostResponseScript(convertedScriptResult.script) : convertedScriptResult.script
+        )
+      };
+    } else if (isPostResponse && convertedScriptResult.script) {
+      convertedScriptResult = {
+        ...convertedScriptResult,
+        script: wrapPostResponseScript(convertedScriptResult.script)
       };
     }
     if (!convertedScriptResult.script) {
