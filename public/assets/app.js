@@ -1,5 +1,6 @@
 import hljs from 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/highlight.min.js';
 import yaml from 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/languages/yaml.min.js';
+import { convertWithAIEnhancement, getAISettingsStatus } from './helpers/aiConversionClient.js';
 import { convertContent } from './helpers/conversion.js?v=postman-vars-set-runtime-v3';
 import { buildSuggestedFileName, getFileExtension, isSupportedInputExtension } from './helpers/file.js';
 import { createToastNotifier } from './helpers/toast.js';
@@ -46,6 +47,7 @@ let selectedFile = null;
 let convertedYaml = null;
 let suggestedFileName = 'converted.relampo.yml';
 let sessionAISettings = null;
+let latestAIConversionReport = null;
 const showToast = createToastNotifier( toast, toastMessage );
 
 const searchBar = document.getElementById( 'searchBar' );
@@ -188,20 +190,61 @@ function saveAISettings() {
 
 function testAISettings() {
   const settings = readAISettingsFromForm();
-  if ( !settings.enabled ) {
-    showToast( 'Enable AI conversion before testing', 'error' );
-    return;
-  }
-  if ( !settings.endpoint ) {
-    showToast( 'AI endpoint is required', 'error' );
-    return;
-  }
-  if ( !settings.apiKey && settings.provider !== 'custom_agent' ) {
-    showToast( 'API key is required for this provider', 'error' );
+  const status = getAISettingsStatus( settings );
+  if ( !status.ready ) {
+    showToast( status.reason, 'error' );
     return;
   }
 
   showToast( 'AI connection test is not wired yet' );
+}
+
+function buildConverterReport( yamlContent ) {
+  const warnings = [];
+  const detectedFeatures = [];
+  const unsupportedItems = [];
+
+  if ( yamlContent.includes( 'extract:' ) || yamlContent.includes( 'extractors:' ) ) {
+    detectedFeatures.push( 'extractors' );
+  }
+  if ( yamlContent.includes( 'assertions:' ) || yamlContent.includes( 'assert:' ) ) {
+    detectedFeatures.push( 'assertions' );
+  }
+  if ( yamlContent.includes( 'spark:' ) ) {
+    detectedFeatures.push( 'spark_scripts' );
+  }
+  if ( yamlContent.includes( 'data_source:' ) ) {
+    detectedFeatures.push( 'data_sources' );
+  }
+
+  const warningSections = [
+    /#.*UNSUPPORTED ELEMENTS[\s\S]*?(?=# =====|\n\n|test:)/,
+    /# LIMITATIONS \(not converted\):[\s\S]*?(?=# =====|\n\n|test:)/
+  ];
+
+  for ( const sectionRegex of warningSections ) {
+    const section = yamlContent.match( sectionRegex );
+    if ( !section ) {
+      continue;
+    }
+
+    for ( const line of section[ 0 ].split( '\n' ) ) {
+      if ( !line.match( /#\s+-\s+/ ) ) {
+        continue;
+      }
+      const warning = line.replace( /#\s+-\s+/, '' ).trim();
+      if ( warning ) {
+        warnings.push( warning );
+        unsupportedItems.push( warning );
+      }
+    }
+  }
+
+  return {
+    warnings,
+    detected_features: detectedFeatures,
+    unsupported_items: unsupportedItems
+  };
 }
 
 function clearErrorMessages() {
@@ -315,6 +358,7 @@ function handleFile( file ) {
   copyBtn.disabled = true;
   searchBtn.disabled = true;
   convertedYaml = null;
+  latestAIConversionReport = null;
   validationSection.style.display = 'none';
   resetSearchState();
   hideDownloadOptionsModal();
@@ -329,6 +373,7 @@ function clearFile() {
   fileInput.value = '';
 
   convertedYaml = null;
+  latestAIConversionReport = null;
   setYamlOutput( '' );
   downloadBtn.disabled = true;
   copyBtn.disabled = true;
@@ -353,7 +398,25 @@ async function convertFile() {
   let fileText = '';
   try {
     fileText = await selectedFile.text();
-    convertedYaml = convertContent( fileText, extension );
+    const deterministicYaml = convertContent( fileText, extension );
+    const aiSettings = getCurrentAISettings();
+    latestAIConversionReport = null;
+
+    if ( aiSettings?.enabled ) {
+      const aiResult = await convertWithAIEnhancement( {
+        sourceType: extension === 'jmx' ? 'jmx' : 'postman',
+        filename: selectedFile.name,
+        sourceText: fileText,
+        deterministicYaml,
+        converterReport: buildConverterReport( deterministicYaml ),
+        settings: aiSettings
+      } );
+
+      convertedYaml = aiResult.yaml;
+      latestAIConversionReport = aiResult;
+    } else {
+      convertedYaml = deterministicYaml;
+    }
     suggestedFileName = buildSuggestedFileName( selectedFile.name );
 
     setYamlOutput( convertedYaml );
@@ -366,11 +429,14 @@ async function convertFile() {
     clearErrorMessages();
     
     // Analyze and display conversion summary
-    analyzeConversionSummary( convertedYaml );
+    analyzeConversionSummary( convertedYaml, latestAIConversionReport );
     
-    showToast( `${ extension.toUpperCase() } → YAML conversion completed` );
+    showToast( latestAIConversionReport?.status === 'fallback'
+      ? `${ extension.toUpperCase() } → YAML conversion completed with AI fallback`
+      : `${ extension.toUpperCase() } → YAML conversion completed` );
   } catch ( err ) {
     convertedYaml = null;
+    latestAIConversionReport = null;
     setYamlOutput( `# Conversion error\n# ${ err.message || err }` );
     downloadBtn.disabled = true;
     copyBtn.disabled = true;
@@ -543,7 +609,7 @@ function setYamlOutput( content ) {
   yamlCode.innerHTML = highlighted.value;
 }
 
-function analyzeConversionSummary( yamlContent ) {
+function analyzeConversionSummary( yamlContent, aiConversionReport = null ) {
   const conversionSummary = document.getElementById( 'conversionSummary' );
   const defaultReference = document.getElementById( 'defaultReference' );
   
@@ -631,6 +697,14 @@ function analyzeConversionSummary( yamlContent ) {
         }
       }
     } );
+  }
+
+  if ( aiConversionReport?.warnings?.length ) {
+    summary.warnings.push( ...aiConversionReport.warnings );
+  }
+
+  if ( aiConversionReport?.manualReviewItems?.length ) {
+    summary.limitations.push( ...aiConversionReport.manualReviewItems );
   }
 
   displayConversionSummary( summary );
