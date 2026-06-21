@@ -8,6 +8,7 @@ The pack has four layers:
 2. Editor Compatibility Pack
 3. Converter Heuristics Pack
 4. Golden Examples Pack
+5. AI Settings Contract
 
 The backend is the authority for YAML syntax and runtime behavior. The editor defines compatibility and review ergonomics. The current converter provides deterministic extraction heuristics. Golden examples show real recorded-to-correlated transformations.
 
@@ -29,3 +30,4 @@ The AI must not invent Relampo syntax. When sources disagree, prefer the backend
 - `golden-examples.md`: recorded vs correlated examples to use as few-shot behavior.
 - `validation-gates.md`: validation steps before a YAML is accepted.
 - `ai-conversion-flow.md`: proposed end-to-end AI conversion pipeline.
+- `ai-settings-contract.md`: BYOK settings, security rules, and API request/response contract.

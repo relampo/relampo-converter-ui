@@ -35,6 +35,8 @@ Do not expose a deterministic/AI mode choice in the primary flow. If AI is confi
 
 Do not call AI models directly from the browser. Use a backend endpoint so API keys and validation logic remain server-side.
 
+BYOK settings and request/response payloads are defined in `ai-settings-contract.md`.
+
 Suggested endpoint:
 
 ```text
