@@ -1,6 +1,6 @@
 import hljs from 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/highlight.min.js';
 import yaml from 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/languages/yaml.min.js';
-import { convertWithAIEnhancement, getAISettingsStatus } from './helpers/aiConversionClient.js';
+import { convertWithAIEnhancement, getAISettingsStatus, testAIConnection } from './helpers/aiConversionClient.js';
 import { convertContent } from './helpers/conversion.js?v=postman-vars-set-runtime-v3';
 import { buildSuggestedFileName, getFileExtension, isSupportedInputExtension } from './helpers/file.js';
 import { createToastNotifier } from './helpers/toast.js';
@@ -34,6 +34,7 @@ const aiSettingsBtn = document.getElementById( 'aiSettingsBtn' );
 const aiSettingsModal = document.getElementById( 'aiSettingsModal' );
 const aiEnabled = document.getElementById( 'aiEnabled' );
 const aiProvider = document.getElementById( 'aiProvider' );
+const aiProxyUrl = document.getElementById( 'aiProxyUrl' );
 const aiEndpoint = document.getElementById( 'aiEndpoint' );
 const aiModel = document.getElementById( 'aiModel' );
 const aiApiKey = document.getElementById( 'aiApiKey' );
@@ -62,6 +63,7 @@ let currentMatchIndex = -1;
 let originalYamlHtml = '';
 
 const AI_SETTINGS_STORAGE_KEY = 'relampo-ai-settings';
+const DEFAULT_AI_PROXY_URL = 'http://127.0.0.1:8787';
 
 const AI_PROVIDER_DEFAULTS = {
   openai: {
@@ -97,7 +99,7 @@ function getCurrentAISettings() {
 }
 
 function applyAISettingsToForm( settings = null ) {
-  if ( !aiEnabled || !aiProvider || !aiEndpoint || !aiModel || !aiApiKey || !aiRemember ) {
+  if ( !aiEnabled || !aiProvider || !aiProxyUrl || !aiEndpoint || !aiModel || !aiApiKey || !aiRemember ) {
     return;
   }
 
@@ -107,6 +109,7 @@ function applyAISettingsToForm( settings = null ) {
 
   aiEnabled.checked = Boolean( selectedSettings.enabled );
   aiProvider.value = provider;
+  aiProxyUrl.value = selectedSettings.proxyUrl || DEFAULT_AI_PROXY_URL;
   aiEndpoint.value = selectedSettings.endpoint ?? defaults.endpoint;
   aiModel.value = selectedSettings.model ?? defaults.model;
   aiApiKey.value = selectedSettings.apiKey || '';
@@ -117,6 +120,7 @@ function readAISettingsFromForm() {
   return {
     enabled: Boolean( aiEnabled?.checked ),
     provider: aiProvider?.value || 'openai',
+    proxyUrl: aiProxyUrl?.value.trim() || DEFAULT_AI_PROXY_URL,
     endpoint: aiEndpoint?.value.trim() || '',
     model: aiModel?.value.trim() || '',
     apiKey: aiApiKey?.value || '',
@@ -140,6 +144,7 @@ function clearAISettings() {
   applyAISettingsToForm( {
     enabled: false,
     provider: 'openai',
+    proxyUrl: DEFAULT_AI_PROXY_URL,
     endpoint: AI_PROVIDER_DEFAULTS.openai.endpoint,
     model: AI_PROVIDER_DEFAULTS.openai.model,
     apiKey: '',
@@ -188,7 +193,7 @@ function saveAISettings() {
   showToast( settings.enabled ? 'AI settings saved' : 'AI settings saved but disabled' );
 }
 
-function testAISettings() {
+async function testAISettings() {
   const settings = readAISettingsFromForm();
   const status = getAISettingsStatus( settings );
   if ( !status.ready ) {
@@ -196,7 +201,12 @@ function testAISettings() {
     return;
   }
 
-  showToast( 'AI connection test is not wired yet' );
+  try {
+    const result = await testAIConnection( settings );
+    showToast( result.connected ? 'AI proxy connected' : result.message );
+  } catch ( err ) {
+    showToast( err.message || 'AI proxy test failed', 'error' );
+  }
 }
 
 function buildConverterReport( yamlContent ) {

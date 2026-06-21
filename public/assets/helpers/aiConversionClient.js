@@ -1,4 +1,39 @@
-const AI_CONVERSION_ENDPOINT = '/api/convert/ai';
+const DEFAULT_AI_PROXY_URL = 'http://127.0.0.1:8787';
+
+function buildProxyURL( settings, path ) {
+  const baseURL = settings.proxyUrl || DEFAULT_AI_PROXY_URL;
+  return new URL( path, baseURL.endsWith( '/' ) ? baseURL : `${ baseURL }/` ).toString();
+}
+
+function buildHeaders( settings ) {
+  const headers = {
+    'Content-Type': 'application/json'
+  };
+
+  if ( settings.apiKey ) {
+    headers[ 'X-AI-API-Key' ] = settings.apiKey;
+  }
+
+  return headers;
+}
+
+async function readProxyJSON( response ) {
+  let body = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+
+  if ( !response.ok ) {
+    const error = new Error( body?.error || body?.warnings?.join( ' ' ) || body?.errors?.join( ' ' ) || 'AI proxy request failed.' );
+    error.status = response.status;
+    error.body = body;
+    throw error;
+  }
+
+  return body;
+}
 
 export function getAISettingsStatus( settings ) {
   if ( !settings?.enabled ) {
@@ -26,6 +61,27 @@ export function getAISettingsStatus( settings ) {
     ready: true,
     reason: null
   };
+}
+
+export async function testAIConnection( settings ) {
+  const status = getAISettingsStatus( settings );
+  if ( !status.ready ) {
+    throw new Error( status.reason );
+  }
+
+  const response = await fetch( buildProxyURL( settings, '/api/convert/ai/test' ), {
+    method: 'POST',
+    headers: buildHeaders( settings ),
+    body: JSON.stringify( {
+      ai_settings: {
+        provider: settings.provider,
+        endpoint: settings.endpoint,
+        model: settings.model
+      }
+    } )
+  } );
+
+  return readProxyJSON( response );
 }
 
 export function buildAIConversionPayload( {
@@ -82,21 +138,38 @@ export async function convertWithAIEnhancement( {
     settings
   } );
 
-  return {
-    status: 'fallback',
-    yaml: deterministicYaml,
-    warnings: [
-      `AI settings are configured for ${ settings.provider }, but ${ AI_CONVERSION_ENDPOINT } is not connected yet.`,
-      'The deterministic YAML was returned as the safe fallback.'
-    ],
-    manualReviewItems: [],
-    conversionSummary: {
-      provider: settings.provider,
-      model: settings.model,
-      endpoint: settings.endpoint,
-      usedAI: false,
-      usedDeterministicFallback: true,
-      preparedPayload: payload
-    }
-  };
+  try {
+    const response = await fetch( buildProxyURL( settings, '/api/convert/ai' ), {
+      method: 'POST',
+      headers: buildHeaders( settings ),
+      body: JSON.stringify( payload )
+    } );
+    const body = await readProxyJSON( response );
+
+    return {
+      status: body.status,
+      yaml: body.yaml || deterministicYaml,
+      warnings: Array.isArray( body.warnings ) ? body.warnings : [],
+      manualReviewItems: Array.isArray( body.manual_review_items ) ? body.manual_review_items : [],
+      conversionSummary: body.conversion_summary || {}
+    };
+  } catch ( err ) {
+    return {
+      status: 'fallback',
+      yaml: deterministicYaml,
+      warnings: [
+        `AI proxy request failed: ${ err.message || err }`,
+        'The deterministic YAML was returned as the safe fallback.'
+      ],
+      manualReviewItems: [],
+      conversionSummary: {
+        provider: settings.provider,
+        model: settings.model,
+        endpoint: settings.endpoint,
+        proxyUrl: settings.proxyUrl,
+        usedAI: false,
+        usedDeterministicFallback: true
+      }
+    };
+  }
 }
