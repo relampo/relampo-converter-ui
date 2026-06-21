@@ -1,6 +1,7 @@
 import hljs from 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/highlight.min.js';
 import yaml from 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/languages/yaml.min.js';
 import { convertContent } from './helpers/conversion.js?v=postman-vars-set-runtime-v3';
+import { buildAIConversionReport } from './helpers/aiConversion.js';
 import { buildSuggestedFileName, getFileExtension, isSupportedInputExtension } from './helpers/file.js';
 import { createToastNotifier } from './helpers/toast.js';
 import { displayValidation, validateYaml } from './helpers/validation.js';
@@ -29,10 +30,15 @@ const validationSection = document.getElementById( 'validationSection' );
 const validationResults = document.getElementById( 'validationResults' );
 const errorMessageSection = document.getElementById( 'errorMessageSection' );
 const conversionErrorList = document.getElementById( 'conversionErrorList' );
+const conversionModeInputs = Array.from( document.querySelectorAll( 'input[name="conversionMode"]' ) );
+const conversionModeNote = document.getElementById( 'conversionModeNote' );
+const aiReviewSection = document.getElementById( 'aiReviewSection' );
+const aiReviewList = document.getElementById( 'aiReviewList' );
 
 let selectedFile = null;
 let convertedYaml = null;
 let suggestedFileName = 'converted.relampo.yml';
+let aiConversionReport = null;
 const showToast = createToastNotifier( toast, toastMessage );
 
 const searchBar = document.getElementById( 'searchBar' );
@@ -53,6 +59,51 @@ function clearErrorMessages() {
   if ( errorMessageSection ) {
     errorMessageSection.style.display = 'none';
   }
+}
+
+function getConversionMode() {
+  const selected = conversionModeInputs.find( input => input.checked );
+  return selected?.value || 'deterministic';
+}
+
+function updateConversionModeNote() {
+  if ( !conversionModeNote ) {
+    return;
+  }
+  conversionModeNote.textContent = getConversionMode() === 'ai'
+    ? 'Runs deterministic conversion first, then prepares the result for backend AI enhancement.'
+    : 'Uses the current browser-side converter.';
+}
+
+function clearAIReview() {
+  aiConversionReport = null;
+  if ( aiReviewList ) {
+    aiReviewList.textContent = '';
+  }
+  if ( aiReviewSection ) {
+    aiReviewSection.style.display = 'none';
+  }
+}
+
+function displayAIReview( report ) {
+  if ( !aiReviewSection || !aiReviewList || !report ) {
+    return;
+  }
+
+  aiReviewList.textContent = '';
+  const items = [
+    ...( report.summary || [] ),
+    ...( report.warnings || [] ),
+    ...( report.manualReviewItems || [] )
+  ];
+
+  for ( const item of items ) {
+    const li = document.createElement( 'li' );
+    li.textContent = item;
+    aiReviewList.appendChild( li );
+  }
+
+  aiReviewSection.style.display = items.length > 0 ? 'block' : 'none';
 }
 
 function showErrorMessages( errors ) {
@@ -157,6 +208,7 @@ function handleFile( file ) {
   copyBtn.disabled = true;
   searchBtn.disabled = true;
   convertedYaml = null;
+  clearAIReview();
   validationSection.style.display = 'none';
   resetSearchState();
   hideDownloadOptionsModal();
@@ -171,6 +223,7 @@ function clearFile() {
   fileInput.value = '';
 
   convertedYaml = null;
+  clearAIReview();
   setYamlOutput( '' );
   downloadBtn.disabled = true;
   copyBtn.disabled = true;
@@ -195,7 +248,17 @@ async function convertFile() {
   let fileText = '';
   try {
     fileText = await selectedFile.text();
-    convertedYaml = convertContent( fileText, extension );
+    const deterministicYaml = convertContent( fileText, extension );
+    if ( getConversionMode() === 'ai' ) {
+      aiConversionReport = buildAIConversionReport( deterministicYaml, {
+        extension,
+        filename: selectedFile.name
+      } );
+      convertedYaml = aiConversionReport.yaml;
+    } else {
+      convertedYaml = deterministicYaml;
+      clearAIReview();
+    }
     suggestedFileName = buildSuggestedFileName( selectedFile.name );
 
     setYamlOutput( convertedYaml );
@@ -209,10 +272,16 @@ async function convertFile() {
     
     // Analyze and display conversion summary
     analyzeConversionSummary( convertedYaml );
+    if ( aiConversionReport ) {
+      displayAIReview( aiConversionReport );
+    }
     
-    showToast( `${ extension.toUpperCase() } → YAML conversion completed` );
+    showToast( getConversionMode() === 'ai'
+      ? `${ extension.toUpperCase() } → AI enhancement preview completed`
+      : `${ extension.toUpperCase() } → YAML conversion completed` );
   } catch ( err ) {
     convertedYaml = null;
+    clearAIReview();
     setYamlOutput( `# Conversion error\n# ${ err.message || err }` );
     downloadBtn.disabled = true;
     copyBtn.disabled = true;
@@ -596,6 +665,10 @@ langToggle.addEventListener( 'change', ( e ) => {
 
 // Initialize i18n on page load
 initI18n();
+updateConversionModeNote();
+conversionModeInputs.forEach( input => {
+  input.addEventListener( 'change', updateConversionModeNote );
+} );
 
 // Search functionality
 function showSearchBar() {

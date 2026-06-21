@@ -87,6 +87,32 @@
           Convert Postman (.json) or JMeter (.jmx) files to Relampo YAML directly in your browser.
         </div>
 
+        <div class='conversion-mode-card' aria-labelledby='conversionModeTitle'>
+          <div class='conversion-mode-title' id='conversionModeTitle'>Conversion mode</div>
+          <div class='conversion-mode-options'>
+            <label class='conversion-mode-option'>
+              <input
+                type='radio'
+                name='conversionMode'
+                value='deterministic'
+                checked
+              />
+              <span>Deterministic</span>
+            </label>
+            <label class='conversion-mode-option'>
+              <input
+                type='radio'
+                name='conversionMode'
+                value='ai'
+              />
+              <span>AI Enhanced</span>
+            </label>
+          </div>
+          <div class='conversion-mode-note' id='conversionModeNote'>
+            Uses the current browser-side converter.
+          </div>
+        </div>
+
         <div
           class='upload-zone'
           id='uploadZone'
@@ -438,6 +464,33 @@
               Structure Validation
             </div>
             <div id='validationResults'></div>
+          </div>
+
+          <!-- AI Review Section -->
+          <div class='reference-section' id='aiReviewSection' style='display: none;'>
+            <div class='reference-title' style='color: #facc15;'>
+              <svg
+                xmlns='http://www.w3.org/2000/svg'
+                width='16'
+                height='16'
+                viewBox='0 0 24 24'
+                fill='none'
+                stroke='currentColor'
+                stroke-width='2'
+                style='display: inline-block; vertical-align: middle; margin-right: 6px;'
+              >
+                <path d='M12 2v4'></path>
+                <path d='M12 18v4'></path>
+                <path d='m4.93 4.93 2.83 2.83'></path>
+                <path d='m16.24 16.24 2.83 2.83'></path>
+                <path d='M2 12h4'></path>
+                <path d='M18 12h4'></path>
+                <path d='m4.93 19.07 2.83-2.83'></path>
+                <path d='m16.24 7.76 2.83-2.83'></path>
+              </svg>
+              AI Conversion Review
+            </div>
+            <ul class='reference-list' id='aiReviewList'></ul>
           </div>
         </div>
 
