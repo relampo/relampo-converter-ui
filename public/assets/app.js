@@ -441,9 +441,11 @@ async function convertFile() {
     // Analyze and display conversion summary
     analyzeConversionSummary( convertedYaml, latestAIConversionReport );
     
-    showToast( latestAIConversionReport?.status === 'fallback'
-      ? `${ extension.toUpperCase() } → YAML conversion completed with AI fallback`
-      : `${ extension.toUpperCase() } → YAML conversion completed` );
+    showToast( latestAIConversionReport?.status === 'enhanced'
+      ? `${ extension.toUpperCase() } → YAML conversion completed with AI`
+      : latestAIConversionReport?.status === 'fallback'
+        ? `${ extension.toUpperCase() } → YAML conversion completed with AI fallback`
+        : `${ extension.toUpperCase() } → YAML conversion completed` );
   } catch ( err ) {
     convertedYaml = null;
     latestAIConversionReport = null;
@@ -643,6 +645,7 @@ function analyzeConversionSummary( yamlContent, aiConversionReport = null ) {
     timers: 0,
     controllers: 0,
     folders: 0,
+    aiStatus: aiConversionReport?.status || null,
     warnings: [],
     limitations: []
   };
@@ -759,6 +762,8 @@ function displayConversionSummary( summary ) {
   if ( summary.timers > 0 ) convertedItems.push( `${ summary.timers } Timers` );
   if ( summary.controllers > 0 ) convertedItems.push( `${ summary.controllers } Controllers` );
   if ( summary.folders > 0 ) convertedItems.push( `${ summary.folders } Folders/Groups` );
+  if ( summary.aiStatus === 'enhanced' ) convertedItems.push( 'AI enhancement completed' );
+  if ( summary.aiStatus === 'fallback' ) convertedItems.push( 'Deterministic fallback used' );
 
   renderList( elementsConverted, convertedItems, 'No elements converted' );
 
