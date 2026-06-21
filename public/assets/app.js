@@ -29,10 +29,23 @@ const validationSection = document.getElementById( 'validationSection' );
 const validationResults = document.getElementById( 'validationResults' );
 const errorMessageSection = document.getElementById( 'errorMessageSection' );
 const conversionErrorList = document.getElementById( 'conversionErrorList' );
+const aiSettingsBtn = document.getElementById( 'aiSettingsBtn' );
+const aiSettingsModal = document.getElementById( 'aiSettingsModal' );
+const aiEnabled = document.getElementById( 'aiEnabled' );
+const aiProvider = document.getElementById( 'aiProvider' );
+const aiEndpoint = document.getElementById( 'aiEndpoint' );
+const aiModel = document.getElementById( 'aiModel' );
+const aiApiKey = document.getElementById( 'aiApiKey' );
+const aiRemember = document.getElementById( 'aiRemember' );
+const aiTestBtn = document.getElementById( 'aiTestBtn' );
+const aiClearBtn = document.getElementById( 'aiClearBtn' );
+const aiSaveBtn = document.getElementById( 'aiSaveBtn' );
+const aiCancelBtn = document.getElementById( 'aiCancelBtn' );
 
 let selectedFile = null;
 let convertedYaml = null;
 let suggestedFileName = 'converted.relampo.yml';
+let sessionAISettings = null;
 const showToast = createToastNotifier( toast, toastMessage );
 
 const searchBar = document.getElementById( 'searchBar' );
@@ -45,6 +58,151 @@ const searchClose = document.getElementById( 'searchClose' );
 let searchMatches = [];
 let currentMatchIndex = -1;
 let originalYamlHtml = '';
+
+const AI_SETTINGS_STORAGE_KEY = 'relampo-ai-settings';
+
+const AI_PROVIDER_DEFAULTS = {
+  openai: {
+    endpoint: 'https://api.openai.com/v1',
+    model: 'gpt-4.1'
+  },
+  anthropic: {
+    endpoint: 'https://api.anthropic.com',
+    model: 'claude-sonnet-4-20250514'
+  },
+  openai_compatible: {
+    endpoint: '',
+    model: ''
+  },
+  custom_agent: {
+    endpoint: '',
+    model: ''
+  }
+};
+
+function getStoredAISettings() {
+  try {
+    const stored = localStorage.getItem( AI_SETTINGS_STORAGE_KEY );
+    return stored ? JSON.parse( stored ) : null;
+  } catch {
+    return null;
+  }
+}
+
+function getCurrentAISettings() {
+  const stored = getStoredAISettings();
+  return sessionAISettings || stored || null;
+}
+
+function applyAISettingsToForm( settings = null ) {
+  if ( !aiEnabled || !aiProvider || !aiEndpoint || !aiModel || !aiApiKey || !aiRemember ) {
+    return;
+  }
+
+  const selectedSettings = settings || getCurrentAISettings() || {};
+  const provider = selectedSettings.provider || 'openai';
+  const defaults = AI_PROVIDER_DEFAULTS[ provider ] || AI_PROVIDER_DEFAULTS.openai;
+
+  aiEnabled.checked = Boolean( selectedSettings.enabled );
+  aiProvider.value = provider;
+  aiEndpoint.value = selectedSettings.endpoint ?? defaults.endpoint;
+  aiModel.value = selectedSettings.model ?? defaults.model;
+  aiApiKey.value = selectedSettings.apiKey || '';
+  aiRemember.checked = Boolean( selectedSettings.rememberOnDevice );
+}
+
+function readAISettingsFromForm() {
+  return {
+    enabled: Boolean( aiEnabled?.checked ),
+    provider: aiProvider?.value || 'openai',
+    endpoint: aiEndpoint?.value.trim() || '',
+    model: aiModel?.value.trim() || '',
+    apiKey: aiApiKey?.value || '',
+    rememberOnDevice: Boolean( aiRemember?.checked )
+  };
+}
+
+function persistAISettings( settings ) {
+  sessionAISettings = settings;
+
+  if ( settings.rememberOnDevice ) {
+    localStorage.setItem( AI_SETTINGS_STORAGE_KEY, JSON.stringify( settings ) );
+  } else {
+    localStorage.removeItem( AI_SETTINGS_STORAGE_KEY );
+  }
+}
+
+function clearAISettings() {
+  sessionAISettings = null;
+  localStorage.removeItem( AI_SETTINGS_STORAGE_KEY );
+  applyAISettingsToForm( {
+    enabled: false,
+    provider: 'openai',
+    endpoint: AI_PROVIDER_DEFAULTS.openai.endpoint,
+    model: AI_PROVIDER_DEFAULTS.openai.model,
+    apiKey: '',
+    rememberOnDevice: false
+  } );
+}
+
+function showAISettingsModal() {
+  if ( !aiSettingsModal ) {
+    return;
+  }
+
+  applyAISettingsToForm();
+  aiSettingsModal.classList.add( 'visible' );
+  aiSettingsModal.setAttribute( 'aria-hidden', 'false' );
+  aiProvider?.focus();
+}
+
+function hideAISettingsModal() {
+  if ( !aiSettingsModal ) {
+    return;
+  }
+
+  aiSettingsModal.classList.remove( 'visible' );
+  aiSettingsModal.setAttribute( 'aria-hidden', 'true' );
+}
+
+function updateAIProviderDefaults() {
+  if ( !aiProvider || !aiEndpoint || !aiModel ) {
+    return;
+  }
+
+  const defaults = AI_PROVIDER_DEFAULTS[ aiProvider.value ] || AI_PROVIDER_DEFAULTS.openai;
+  if ( !aiEndpoint.value.trim() ) {
+    aiEndpoint.value = defaults.endpoint;
+  }
+  if ( !aiModel.value.trim() ) {
+    aiModel.value = defaults.model;
+  }
+}
+
+function saveAISettings() {
+  const settings = readAISettingsFromForm();
+  persistAISettings( settings );
+  hideAISettingsModal();
+  showToast( settings.enabled ? 'AI settings saved' : 'AI settings saved but disabled' );
+}
+
+function testAISettings() {
+  const settings = readAISettingsFromForm();
+  if ( !settings.enabled ) {
+    showToast( 'Enable AI conversion before testing', 'error' );
+    return;
+  }
+  if ( !settings.endpoint ) {
+    showToast( 'AI endpoint is required', 'error' );
+    return;
+  }
+  if ( !settings.apiKey && settings.provider !== 'custom_agent' ) {
+    showToast( 'API key is required for this provider', 'error' );
+    return;
+  }
+
+  showToast( 'AI connection test is not wired yet' );
+}
 
 function clearErrorMessages() {
   if ( conversionErrorList ) {
@@ -587,6 +745,41 @@ if ( downloadOptionsModal ) {
   } );
 }
 
+if ( aiSettingsBtn ) {
+  aiSettingsBtn.addEventListener( 'click', showAISettingsModal );
+}
+
+if ( aiSettingsModal ) {
+  aiSettingsModal.addEventListener( 'click', ( event ) => {
+    if ( event.target === aiSettingsModal ) {
+      hideAISettingsModal();
+    }
+  } );
+}
+
+if ( aiProvider ) {
+  aiProvider.addEventListener( 'change', updateAIProviderDefaults );
+}
+
+if ( aiSaveBtn ) {
+  aiSaveBtn.addEventListener( 'click', saveAISettings );
+}
+
+if ( aiCancelBtn ) {
+  aiCancelBtn.addEventListener( 'click', hideAISettingsModal );
+}
+
+if ( aiClearBtn ) {
+  aiClearBtn.addEventListener( 'click', () => {
+    clearAISettings();
+    showToast( 'AI settings cleared' );
+  } );
+}
+
+if ( aiTestBtn ) {
+  aiTestBtn.addEventListener( 'click', testAISettings );
+}
+
 // Language toggle
 const langToggle = document.getElementById( 'langToggle' );
 langToggle.addEventListener( 'change', ( e ) => {
@@ -779,6 +972,11 @@ if ( searchClose ) {
 
 // Keyboard shortcut Ctrl+F / Cmd+F to open search
 document.addEventListener( 'keydown', ( e ) => {
+  if ( e.key === 'Escape' && aiSettingsModal?.classList.contains( 'visible' ) ) {
+    hideAISettingsModal();
+    return;
+  }
+
   if ( e.key === 'Escape' && downloadOptionsModal?.classList.contains( 'visible' ) ) {
     hideDownloadOptionsModal();
     return;

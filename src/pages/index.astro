@@ -50,13 +50,35 @@
           <div class='subtitle' data-i18n='subtitle'>Postman/JMX to Relampo YAML</div>
         </div>
       </div>
-      <div class='lang-toggle'>
-        <span class='lang-label lang-en'>EN</span>
-        <label class='toggle-switch'>
-          <input type='checkbox' id='langToggle' />
-          <span class='toggle-slider'></span>
-        </label>
-        <span class='lang-label lang-es'>ES</span>
+      <div class='header-actions'>
+        <button
+          class='btn-icon header-settings-btn'
+          id='aiSettingsBtn'
+          type='button'
+          title='AI settings'
+          aria-label='AI settings'
+        >
+          <svg
+            xmlns='http://www.w3.org/2000/svg'
+            width='18'
+            height='18'
+            viewBox='0 0 24 24'
+            fill='none'
+            stroke='currentColor'
+            stroke-width='2'
+          >
+            <path d='M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z'></path>
+            <circle cx='12' cy='12' r='3'></circle>
+          </svg>
+        </button>
+        <div class='lang-toggle'>
+          <span class='lang-label lang-en'>EN</span>
+          <label class='toggle-switch'>
+            <input type='checkbox' id='langToggle' />
+            <span class='toggle-slider'></span>
+          </label>
+          <span class='lang-label lang-es'>ES</span>
+        </div>
       </div>
     </header>
 
@@ -496,6 +518,78 @@ test:
           <button class='btn btn-secondary' id='downloadCancelBtn' data-i18n='downloadCancel'>
             Cancel
           </button>
+        </div>
+      </div>
+    </div>
+
+    <div class='download-modal-backdrop' id='aiSettingsModal' aria-hidden='true'>
+      <div class='download-modal ai-settings-modal' role='dialog' aria-modal='true' aria-labelledby='aiSettingsTitle'>
+        <h3 id='aiSettingsTitle' data-i18n='aiSettingsTitle'>AI Settings</h3>
+        <p class='download-modal-message' data-i18n='aiSettingsMessage'>
+          Configure your own AI provider for future assisted conversions.
+        </p>
+
+        <div class='settings-form'>
+          <label class='settings-check'>
+            <input type='checkbox' id='aiEnabled' />
+            <span data-i18n='aiEnableLabel'>Enable AI conversion when configured</span>
+          </label>
+
+          <label class='settings-field'>
+            <span data-i18n='aiProviderLabel'>Provider</span>
+            <select id='aiProvider'>
+              <option value='openai'>OpenAI</option>
+              <option value='anthropic'>Anthropic / Claude</option>
+              <option value='openai_compatible'>OpenAI-compatible endpoint</option>
+              <option value='custom_agent'>Custom agent endpoint</option>
+            </select>
+          </label>
+
+          <label class='settings-field'>
+            <span data-i18n='aiEndpointLabel'>Endpoint</span>
+            <input
+              type='url'
+              id='aiEndpoint'
+              placeholder='https://api.openai.com/v1'
+              autocomplete='off'
+            />
+          </label>
+
+          <label class='settings-field'>
+            <span data-i18n='aiModelLabel'>Model</span>
+            <input
+              type='text'
+              id='aiModel'
+              placeholder='gpt-4.1'
+              autocomplete='off'
+            />
+          </label>
+
+          <label class='settings-field'>
+            <span data-i18n='aiApiKeyLabel'>API key</span>
+            <input
+              type='password'
+              id='aiApiKey'
+              placeholder='sk-...'
+              autocomplete='off'
+            />
+          </label>
+
+          <label class='settings-check'>
+            <input type='checkbox' id='aiRemember' />
+            <span data-i18n='aiRememberLabel'>Remember on this device</span>
+          </label>
+
+          <div class='download-modal-warning' data-i18n='aiSettingsWarning'>
+            API keys are not stored by default. AI conversion is not connected yet.
+          </div>
+        </div>
+
+        <div class='download-modal-actions'>
+          <button class='btn btn-secondary' id='aiTestBtn' data-i18n='aiTestButton'>Test connection</button>
+          <button class='btn btn-secondary' id='aiClearBtn' data-i18n='aiClearButton'>Clear</button>
+          <button class='btn btn-success' id='aiSaveBtn' data-i18n='aiSaveButton'>Save</button>
+          <button class='btn btn-secondary' id='aiCancelBtn' data-i18n='downloadCancel'>Cancel</button>
         </div>
       </div>
     </div>

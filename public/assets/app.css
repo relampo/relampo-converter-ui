@@ -39,6 +39,19 @@ header {
   background: var(--bg-secondary);
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 0 0 auto;
+}
+
+.header-settings-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -516,6 +529,62 @@ header {
   flex: 1;
 }
 
+.ai-settings-modal {
+  width: min(640px, 100%);
+}
+
+.settings-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.settings-field {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-field span,
+.settings-check span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.settings-field input,
+.settings-field select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+
+.settings-field input:focus,
+.settings-field select:focus {
+  border-color: var(--accent-gold);
+  box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.12);
+}
+
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+
+.settings-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-gold);
+  flex: 0 0 auto;
+}
+
 /* Language Toggle */
 .lang-toggle {
   display: flex;
@@ -693,6 +762,14 @@ html[lang='es'] .lang-toggle .lang-label.lang-es {
 }
 
 @media (max-width: 700px) {
+  header {
+    align-items: flex-start;
+  }
+
+  .header-actions {
+    gap: 10px;
+  }
+
   .download-modal-actions {
     flex-direction: column;
   }
