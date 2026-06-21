@@ -19,12 +19,17 @@ User uploads JMX/Postman
   -> UI shows YAML, warnings, validation, and download actions
 ```
 
-## UI Modes
+## User Experience
 
-- Deterministic
-- AI Enhanced
+The main converter flow stays unchanged:
 
-The deterministic path must keep working if AI is unavailable.
+```text
+Upload JMX/Postman
+  -> Convert
+  -> Review YAML, warnings, validation, and download actions
+```
+
+Do not expose a deterministic/AI mode choice in the primary flow. If AI is configured for the user or tenant, the converter may use it behind the same Convert action. If AI is unavailable or disabled, the deterministic path must keep working as the fallback.
 
 ## Backend/API Boundary
 
@@ -63,10 +68,11 @@ Response:
 
 ## First Implementation Phase
 
-1. Keep current conversion button.
-2. Add an optional `AI Enhanced` mode.
-3. Build a local stub for AI response shape.
-4. Later wire the stub to a real backend API.
+1. Keep the current upload and Convert interaction.
+2. Keep deterministic conversion as the reliable fallback.
+3. Add AI configuration outside the primary conversion flow.
+4. Wire the Convert action to call AI only when configuration exists.
+5. Validate AI output before showing or downloading it.
 
 ## AI Rules
 

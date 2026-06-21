@@ -264,59 +264,6 @@ header {
   margin-top: 20px;
 }
 
-.conversion-mode-card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  padding: 14px;
-  margin-bottom: 16px;
-}
-
-.conversion-mode-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 10px;
-}
-
-.conversion-mode-options {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.conversion-mode-option {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 38px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.conversion-mode-option:has(input:checked) {
-  border-color: var(--accent-gold);
-  color: var(--accent-gold);
-  background: rgba(250, 204, 21, 0.08);
-}
-
-.conversion-mode-option input {
-  accent-color: var(--accent-gold);
-}
-
-.conversion-mode-note {
-  margin-top: 10px;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--text-secondary);
-}
-
 .yaml-output {
   flex: 1;
   background: var(--bg-secondary);
