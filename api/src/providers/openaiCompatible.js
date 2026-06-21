@@ -6,6 +6,24 @@ function joinURL( baseURL, path ) {
   return new URL( path.replace( /^\//, '' ), baseURL.endsWith( '/' ) ? baseURL : `${ baseURL }/` ).toString();
 }
 
+async function readProviderError( response ) {
+  let body = null;
+
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+
+  const message = body?.error?.message || body?.message || response.statusText || 'Provider request failed.';
+  const type = body?.error?.type;
+  const code = body?.error?.code;
+
+  return [ message, type && `type=${ type }`, code && `code=${ code }` ]
+    .filter( Boolean )
+    .join( ' ' );
+}
+
 export function validateOpenAICompatibleSettings( { endpoint, apiKey, model } ) {
   const errors = [];
 
@@ -31,10 +49,11 @@ export async function testOpenAICompatibleConnection( { endpoint, apiKey, model 
   } );
 
   if ( !response.ok ) {
+    const providerMessage = await readProviderError( response );
     return {
       ok: false,
       connected: false,
-      message: `Provider rejected connection test with HTTP ${ response.status }.`
+      message: `Provider rejected connection test with HTTP ${ response.status }: ${ providerMessage }`
     };
   }
 
@@ -66,7 +85,8 @@ export async function convertWithOpenAICompatible( { payload, context } ) {
   } );
 
   if ( !response.ok ) {
-    const error = new Error( `Provider conversion request failed with HTTP ${ response.status }.` );
+    const providerMessage = await readProviderError( response );
+    const error = new Error( `Provider conversion request failed with HTTP ${ response.status }: ${ providerMessage }` );
     error.statusCode = response.status;
     throw error;
   }
