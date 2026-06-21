@@ -958,6 +958,7 @@ function buildPostmanVariableBridgeScript(lines = [], nativeExtracts = null) {
 
   const output = [];
   const emittedDeclarations = new Set();
+  const emittingDeclarations = new Set();
   const responseJsonVariable = '_relampoResponseJson';
   let emittedResponseJsonDeclaration = false;
 
@@ -973,13 +974,18 @@ function buildPostmanVariableBridgeScript(lines = [], nativeExtracts = null) {
     if (emittedDeclarations.has(alias) || !declarations.has(alias)) {
       return;
     }
+    if (emittingDeclarations.has(alias)) {
+      return;
+    }
 
+    emittingDeclarations.add(alias);
     const declaration = declarations.get(alias);
     for (const dependency of collectExpressionAliases(declaration.expression, declarations)) {
       emitDeclaration(dependency);
     }
     output.push(...renderVariableDeclaration(declaration, jsonAliases));
     emittedDeclarations.add(alias);
+    emittingDeclarations.delete(alias);
   }
 
   const guardedEntries = new Map();
