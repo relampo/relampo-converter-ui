@@ -26,7 +26,7 @@ async function readProxyJSON( response ) {
   }
 
   if ( !response.ok ) {
-    const error = new Error( body?.error || body?.warnings?.join( ' ' ) || body?.errors?.join( ' ' ) || 'AI proxy request failed.' );
+    const error = new Error( body?.message || body?.error || body?.warnings?.join( ' ' ) || body?.errors?.join( ' ' ) || 'AI proxy request failed.' );
     error.status = response.status;
     error.body = body;
     throw error;

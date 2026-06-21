@@ -1,5 +1,21 @@
 import { buildFallbackResponse } from './fallback.js';
 
+export function parseJSONContent( content ) {
+  if ( typeof content !== 'string' ) {
+    return null;
+  }
+
+  const trimmed = content.trim();
+  const fenced = trimmed.match( /^```(?:json)?\s*([\s\S]*?)\s*```$/i );
+  const jsonText = fenced ? fenced[ 1 ].trim() : trimmed;
+
+  try {
+    return JSON.parse( jsonText );
+  } catch {
+    return null;
+  }
+}
+
 export function normalizeAIResponse( response, fallbackContext ) {
   if ( !response || typeof response !== 'object' || typeof response.yaml !== 'string' ) {
     return buildFallbackResponse( {

@@ -2,7 +2,11 @@ import { supportedProviders } from '../config.js';
 import { buildFallbackResponse } from '../conversion/fallback.js';
 import { validateAnthropicSettings } from '../providers/anthropic.js';
 import { validateCustomAgentSettings } from '../providers/customAgent.js';
-import { validateOpenAICompatibleSettings } from '../providers/openaiCompatible.js';
+import {
+  convertWithOpenAICompatible,
+  testOpenAICompatibleConnection,
+  validateOpenAICompatibleSettings
+} from '../providers/openaiCompatible.js';
 
 function getAIKey( request ) {
   const headerKey = request.headers[ 'x-ai-api-key' ];
@@ -56,6 +60,7 @@ function validateProviderSettings( body, apiKey ) {
   }
 
   const context = {
+    provider,
     endpoint: typeof settings.endpoint === 'string' ? settings.endpoint.trim() : '',
     model: typeof settings.model === 'string' ? settings.model.trim() : '',
     apiKey
@@ -95,6 +100,31 @@ export async function handleAITest( request ) {
     };
   }
 
+  if ( provider === 'openai' || provider === 'openai_compatible' ) {
+    try {
+      const result = await testOpenAICompatibleConnection( context );
+      return {
+        statusCode: result.ok ? 200 : 502,
+        body: {
+          ...result,
+          provider,
+          model: context.model
+        }
+      };
+    } catch ( error ) {
+      return {
+        statusCode: 502,
+        body: {
+          ok: false,
+          connected: false,
+          provider,
+          model: context.model,
+          message: error.message || 'Provider connection test failed.'
+        }
+      };
+    }
+  }
+
   return {
     statusCode: 200,
     body: {
@@ -132,6 +162,28 @@ export async function handleAIConvert( request ) {
         confidence: 0
       }
     };
+  }
+
+  if ( provider === 'openai' || provider === 'openai_compatible' ) {
+    try {
+      return {
+        statusCode: 200,
+        body: await convertWithOpenAICompatible( {
+          payload: body,
+          context
+        } )
+      };
+    } catch ( error ) {
+      return {
+        statusCode: 200,
+        body: buildFallbackResponse( {
+          deterministicYaml: body.deterministic_yaml,
+          provider,
+          model: context.model,
+          reason: error.message || 'AI provider conversion failed.'
+        } )
+      };
+    }
   }
 
   return {

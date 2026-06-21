@@ -25,6 +25,8 @@ PORT=8787
 HOST=127.0.0.1
 ALLOWED_ORIGIN=http://127.0.0.1:4321
 MAX_BODY_BYTES=5242880
+MAX_AI_INPUT_CHARS=120000
+MAX_AI_OUTPUT_TOKENS=12000
 ```
 
 ## Endpoints
@@ -48,3 +50,23 @@ Authorization: Bearer user-key
 ```
 
 The service must not persist API keys, source files, or full prompts.
+
+## OpenAI-compatible Provider
+
+`openai` and `openai_compatible` use:
+
+```text
+GET  {endpoint}/models
+POST {endpoint}/chat/completions
+```
+
+The model is instructed to return a JSON object with:
+
+```json
+{
+  "yaml": "...",
+  "warnings": [],
+  "manual_review_items": [],
+  "confidence": 0.0
+}
+```
