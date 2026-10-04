@@ -1,0 +1,90 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>JMX conversion checks</title>
+<pre id="results">Running…</pre>
+<script type="module">
+import { convertJMXToPulseYAML } from '../public/assets/converters/jmx.js';
+const checks = [];
+const check = (name, run) => {
+  try { run(); checks.push({ name, passed: true }); }
+  catch (error) { checks.push({ name, passed: false, error: error.message }); }
+};
+const assert = (condition, message) => { if (!condition) throw new Error(message); };
+const sampler = '<HTTPSamplerProxy testname="Login"><stringProp name="HTTPSampler.path">/login</stringProp></HTTPSamplerProxy><hashTree/>';
+const group = (name, action, content = sampler) => `<ThreadGroup testname="${name}"><stringProp name="ThreadGroup.on_sample_error">${action}</stringProp></ThreadGroup><hashTree>${content}</hashTree>`;
+const plan = content => `<jmeterTestPlan><hashTree><TestPlan testname="Import test"/><hashTree>${content}</hashTree></hashTree></jmeterTestPlan>`;
+
+check('Start Next Thread Loop becomes next_iteration', () => {
+  const yaml = convertJMXToPulseYAML(plan(group('Business A', 'startnextloop')));
+  assert(yaml.includes('on_error: next_iteration'), 'Missing next_iteration policy');
+});
+
+const csv = (file, name = 'user') => `<CSVDataSet><stringProp name="filename">${file}</stringProp><stringProp name="variableNames">${name}</stringProp><stringProp name="shareMode">shareMode.all</stringProp><boolProp name="recycle">true</boolProp></CSVDataSet><hashTree/>`;
+check('CSV sources stay in their business scopes and load before requests', () => {
+  const yaml = convertJMXToPulseYAML(plan(csv('general.csv', 'region') +
+    group('Business A', 'startnextloop', sampler + csv('a.csv')) +
+    group('Business B', 'stopthread', sampler + csv('b.csv'))));
+  const a = yaml.slice(yaml.indexOf('name: "Business A"'), yaml.indexOf('name: "Business B"'));
+  const b = yaml.slice(yaml.indexOf('name: "Business B"'));
+  assert(yaml.includes('CSV Data Sources: 3'), 'CSV count was lost');
+  assert(a.includes('file: a.csv') && !a.includes('file: b.csv'), 'Business A lost its CSV scope');
+  assert(b.includes('file: b.csv') && !b.includes('file: a.csv'), 'Business B lost its CSV scope');
+  assert(a.indexOf('file: a.csv') < a.indexOf('request:'), 'CSV must load before requests');
+  assert(a.includes('on_error: next_iteration') && b.includes('on_error: stop_user'), 'Policies leaked between businesses');
+  assert(yaml.includes('variable_names:'), 'Explicit column names must not consume a header row');
+  assert(yaml.includes('Independent schedules and thread-loop boundaries are not preserved'), 'Missing multi-group warning');
+});
+
+check('Global stop actions fail with a clear migration message', () => {
+  for (const action of ['stoptest', 'stoptestnow', 'unknown']) {
+    let message = '';
+    try { convertJMXToPulseYAML(plan(group('Business', action))); }
+    catch (error) { message = error.message; }
+    assert(message.includes('has no Relampo equivalent'), `Unsafe action ${action} was silently mapped`);
+  }
+});
+check('Nested and disabled requests retain their group policies', () => {
+  const nested = '<IfController><stringProp name="IfController.condition">true</stringProp></IfController><hashTree>' + sampler + '</hashTree>';
+  const disabled = sampler.replace('<HTTPSamplerProxy ', '<HTTPSamplerProxy enabled="false" ');
+  const yaml = convertJMXToPulseYAML(plan(group('Business', 'stopthread', nested + disabled)));
+  assert((yaml.match(/on_error: stop_user/g) || []).length === 2, 'A nested request lost its policy');
+  assert(yaml.includes('if: "false"'), 'A disabled sampler became executable');
+});
+check('Disabled CSV configurations are excluded', () => {
+  const disabled = csv('disabled.csv').replace('<CSVDataSet>', '<CSVDataSet enabled="false">');
+  const yaml = convertJMXToPulseYAML(plan(group('Business', 'continue', disabled + sampler)));
+  assert(!yaml.includes('disabled.csv'), 'Disabled CSV became active');
+  assert(yaml.includes('CSV Data Sources: 0'), 'Disabled CSV was counted');
+});
+check('Disabled thread groups stay disabled', () => {
+  const disabled = group('Business', 'continue').replace('<ThreadGroup ', '<ThreadGroup enabled="false" ');
+  const yaml = convertJMXToPulseYAML(plan(disabled));
+  assert(yaml.includes('if: "false"'), 'Disabled Thread Group became executable');
+});
+
+check('Sampler-local CSV configurations load only before their request', () => {
+  const localSampler = sampler.replace('<hashTree/>', `<hashTree>${csv('local.csv')}</hashTree>`);
+  const yaml = convertJMXToPulseYAML(plan(group('Business', 'continue', localSampler + sampler)));
+  assert(yaml.includes('file: local.csv'), 'Sampler-local CSV was dropped');
+  assert(yaml.indexOf('file: local.csv') < yaml.indexOf('request:'), 'Sampler-local CSV loads too late');
+  assert(yaml.includes('CSV Data Sources: 1'), 'Sampler-local CSV count was lost');
+});
+
+check('A single ThreadGroup warns when its load settings are not imported', () => {
+  const singleGroup = group('Business', 'continue').replace('</ThreadGroup>', '<stringProp name="ThreadGroup.num_threads">50</stringProp><stringProp name="ThreadGroup.ramp_time">60</stringProp><elementProp name="ThreadGroup.main_controller"><stringProp name="LoopController.loops">10</stringProp></elementProp></ThreadGroup>');
+  const yaml = convertJMXToPulseYAML(plan(singleGroup));
+  assert(yaml.includes('users, loops and ramp-up are not imported'), 'A single group lost its load without warning');
+});
+
+check('Disabled controllers keep their CSV and requests inactive', () => {
+  for (const tag of ['GenericController', 'IfController', 'LoopController']) {
+    const controller = `<${tag} enabled="false"><stringProp name="IfController.condition">true</stringProp><stringProp name="LoopController.loops">2</stringProp></${tag}><hashTree>${csv('inactive.csv')}${sampler}</hashTree>`;
+    const yaml = convertJMXToPulseYAML(plan(group('Business', 'continue', controller)));
+    assert(yaml.includes('if: "false"'), `${tag} became active`);
+    assert(yaml.includes('HTTP Requests: 0') && yaml.includes('CSV Data Sources: 0'), `${tag} counted inactive elements`);
+  }
+});
+
+window.testResults = checks;
+document.querySelector('#results').textContent = JSON.stringify(checks, null, 2);
+</script>
