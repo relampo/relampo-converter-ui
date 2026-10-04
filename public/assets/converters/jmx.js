@@ -274,12 +274,36 @@ function parseUserDefinedVariables(argumentsNode) {
   return variables;
 }
 
-function parseCSVDataSet(csvNode) {
+function parseCSVDataSet(csvNode, context) {
   const filename = getStringProp(csvNode, 'filename');
   const variableNames = getStringProp(csvNode, 'variableNames');
-  const shareMode = getStringProp(csvNode, 'shareMode');
-  const recycle = getBoolProp(csvNode, 'recycle');
+  const shareMode = getStringProp(csvNode, 'shareMode') || 'shareMode.all';
+  const recycle = !findDirectChild(csvNode, 'boolProp', 'name', 'recycle') || getBoolProp(csvNode, 'recycle');
   const stopThread = getBoolProp(csvNode, 'stopThread');
+
+  if (shareMode && shareMode !== 'shareMode.all' && shareMode !== 'shareMode.thread') {
+    context.warnings.push(`CSV "${filename}": sharing mode "${shareMode}" has no exact Relampo equivalent; per_vu is used. Review data allocation.`);
+  }
+  if (!recycle && !stopThread) {
+    context.warnings.push(`CSV "${filename}": JMeter EOF values are not supported; Relampo recycles rows. Review exhaustion settings.`);
+  }
+  if (shareMode === 'shareMode.all') {
+    context.warnings.push(`CSV "${filename}": shared rows use a separate cursor on each distributed worker. Review data allocation across nodes.`);
+  }
+
+  if (getBoolProp(csvNode, 'ignoreFirstLine')) {
+    context.warnings.push(`CSV "${filename}": skipping the first row is not supported; remove it from the file before running.`);
+  }
+  const delimiter = getStringProp(csvNode, 'delimiter');
+  if (delimiter && delimiter !== ',') {
+    context.warnings.push(`CSV "${filename}": delimiter "${delimiter}" is not supported; convert the file to comma-separated values.`);
+  }
+  if (!variableNames) {
+    context.warnings.push(`CSV "${filename}": header-derived variable names need an explicit bind mapping. Replace the INCOMPLETE mapping before running.`);
+  }
+  if (stopThread) {
+    context.warnings.push(`CSV "${filename}": on_exhausted stop ends the Relampo iteration. JMeter Stop Thread does not have the same lifetime.`);
+  }
 
   // Include even if filename is empty
   const dataSource = {
@@ -294,10 +318,7 @@ function parseCSVDataSet(csvNode) {
   if (variableNames) {
     const varList = variableNames.split(',').map(v => v.trim()).filter(v => v);
     if (varList.length > 0) {
-      dataSource.bind = {};
-      for (const varName of varList) {
-        dataSource.bind[varName] = varName;
-      }
+      dataSource.variable_names = varList;
     }
   } else {
     // Add placeholder if empty
@@ -747,14 +768,34 @@ function convertSamplerToStep(sampler, samplerHashTree, context = {}) {
     if (countStats && context.stats) context.stats.assertions += assertions.length;
   }
 
+  if (context.threadErrorAction) {
+    request.error_policy = { on_error: context.threadErrorAction };
+  }
+
   // Count this request
   if (countStats && context.stats) context.stats.requests++;
 
+  const dataSteps = parseScopedCSVSteps(samplerHashTree, context);
+  if (dataSteps.length > 0) {
+    return { group: { name: samplerName || `${method} ${url}`, steps: [...dataSteps, { request }] } };
+  }
   return { request };
 }
 
-function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
+function parseScopedCSVSteps(hashTreeNode, context) {
   const steps = [];
+  // JMeter configuration applies to the whole scope, regardless of tree order.
+  for (const pair of getHashTreePairs(hashTreeNode)) {
+    if (pair.element.tagName === 'CSVDataSet' && pair.element.getAttribute('enabled') !== 'false') {
+      steps.push({ data_source: parseCSVDataSet(pair.element, context) });
+      if (context.countStats !== false) context.stats.dataSources++;
+    }
+  }
+  return steps;
+}
+
+function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
+  const steps = parseScopedCSVSteps(hashTreeNode, context);
   let localDefaults = { ...inheritedDefaults };
   
   // Collect global pre/post processors at Thread Group level
@@ -767,7 +808,10 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
     context.warnings = [];
   }
 
-  for (const pair of getHashTreePairs(hashTreeNode)) {
+  const pairs = getHashTreePairs(hashTreeNode);
+
+
+  for (const pair of pairs) {
     const tag = pair.element.tagName;
     const elementName = getElementName(pair.element, tag);
 
@@ -776,14 +820,7 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
       continue;
     }
 
-    // Collect CSV Data Set Configs at root level
-    if (tag === 'CSVDataSet') {
-      const csvData = parseCSVDataSet(pair.element);
-      if (csvData && context.csvDataSources) {
-        context.csvDataSources.push(csvData);
-      }
-      continue;
-    }
+    if (tag === 'CSVDataSet') continue;
 
     // Collect User Defined Variables at root level
     if (tag === 'Arguments' && context.variables) {
@@ -927,54 +964,50 @@ function parseStepsFromHashTree(hashTreeNode, inheritedDefaults, context = {}) {
       continue;
     }
 
-    // Handle If Controller
-    if (tag === 'IfController') {
-      const condition = getStringProp(pair.element, 'IfController.condition');
-      const convertedCondition = convertIfCondition(condition);
-      const nestedSteps = parseStepsFromHashTree(pair.hashTree, localDefaults, context);
+    if (tag === 'IfController' || tag === 'LoopController' || CONTROLLER_TAGS.has(tag)) {
+      const disabled = pair.element.getAttribute('enabled') === 'false';
+      const childContext = disabled
+        ? { ...context, countStats: false, globalSparkScripts: [...context.globalSparkScripts] }
+        : context;
+      const nestedSteps = parseStepsFromHashTree(pair.hashTree, localDefaults, childContext);
       if (nestedSteps.length > 0) {
-        steps.push({
-          if: convertedCondition,
-          steps: nestedSteps
-        });
-        if (context.stats) context.stats.controllers++;
+        let step;
+        if (tag === 'IfController') {
+          step = { if: convertIfCondition(getStringProp(pair.element, 'IfController.condition')), steps: nestedSteps };
+        } else if (tag === 'LoopController') {
+          step = { loop: parseInt(getTextProp(pair.element, 'LoopController.loops')) || 1, steps: nestedSteps };
+        } else {
+          step = { group: { name: elementName, steps: nestedSteps } };
+        }
+        steps.push(disabled ? { if: 'false', steps: [step] } : step);
+        if (!disabled && context.countStats !== false) context.stats.controllers++;
       }
       continue;
     }
 
-    // Handle Loop Controller
-    if (tag === 'LoopController') {
-      const loops = getTextProp(pair.element, 'LoopController.loops');
-      const loopCount = parseInt(loops) || 1;
-      const nestedSteps = parseStepsFromHashTree(pair.hashTree, localDefaults, context);
-      if (nestedSteps.length > 0) {
-        steps.push({
-          loop: loopCount,
-          steps: nestedSteps
-        });
-        if (context.stats) context.stats.controllers++;
-      }
-      continue;
-    }
-    
-    // Handle ThreadGroup - process its content transparently (don't count as controller)
+    // Preserve each thread group's policy on its requests. Relampo groups do
+    // not have independent load schedules or thread-loop boundaries.
     if (tag === 'ThreadGroup') {
-      const nestedSteps = parseStepsFromHashTree(pair.hashTree, localDefaults, context);
-      steps.push(...nestedSteps);
-      continue;
-    }
-
-    if (CONTROLLER_TAGS.has(tag)) {
-      const groupName = getElementName(pair.element, tag);
-      const nestedSteps = parseStepsFromHashTree(pair.hashTree, localDefaults, context);
-      if (nestedSteps.length > 0) {
-        steps.push({
-          group: {
-            name: groupName,
-            steps: nestedSteps
-          }
-        });
-        if (context.stats) context.stats.controllers++;
+      context.warnings.push(`Thread Group "${elementName}": JMeter users, loops and ramp-up are not imported. Review scenario.load before running.`);
+      const action = getStringProp(pair.element, 'ThreadGroup.on_sample_error') || 'continue';
+      const errorActions = { continue: 'continue', startnextloop: 'next_iteration', stopthread: 'stop_user' };
+      if (!Object.hasOwn(errorActions, action)) {
+        throw new Error(`Thread Group "${elementName}": error action "${action}" has no Relampo equivalent. Select Continue, Start Next Thread Loop or Stop Thread before converting.`);
+      }
+      const groupContext = {
+        ...context,
+        threadErrorAction: errorActions[action],
+        globalSparkScripts: [...context.globalSparkScripts],
+        globalSparkAdded: false,
+        countStats: context.countStats !== false && pair.element.getAttribute('enabled') !== 'false'
+      };
+      const nestedSteps = parseStepsFromHashTree(pair.hashTree, localDefaults, groupContext);
+      const groupStep = { group: { name: elementName, steps: nestedSteps } };
+      if (pair.element.getAttribute('enabled') === 'false') {
+        steps.push({ if: 'false', steps: [groupStep] });
+      } else {
+        context.threadGroups.push(elementName);
+        steps.push(groupStep);
       }
       continue;
     }
@@ -1143,7 +1176,7 @@ export function convertJMXToPulseYAML(jmxText, customOptions = {}) {
   // Create context to collect variables, CSV configs, and statistics
   const context = {
     variables: {},
-    csvDataSources: [],
+    threadGroups: [],
     stats: {
       requests: 0,
       extractors: 0,
@@ -1170,11 +1203,14 @@ export function convertJMXToPulseYAML(jmxText, customOptions = {}) {
   
   const steps = parseStepsFromHashTree(targetTree, {}, context);
 
+  if (context.threadGroups.length > 1) {
+    context.warnings.push('Thread Groups share one Relampo scenario and load. Independent schedules and thread-loop boundaries are not preserved. Run groups separately for equivalent execution.');
+  }
+
   const cleanedVariables = pruneEmptyVariables(context.variables);
 
   // Update stats with variables and data sources count
   context.stats.variables = Object.keys(cleanedVariables).length;
-  context.stats.dataSources = context.csvDataSources.length;
 
   const pulse = {
     test: {
@@ -1189,10 +1225,6 @@ export function convertJMXToPulseYAML(jmxText, customOptions = {}) {
     pulse.variables = cleanedVariables;
   }
 
-  // Add data_source if CSV configs found (use first one for now)
-  if (context.csvDataSources.length > 0) {
-    pulse.data_source = context.csvDataSources[0];
-  }
 
   pulse.http_defaults = {
     timeout: options.defaultTimeout,
@@ -1244,7 +1276,7 @@ export function convertJMXToPulseYAML(jmxText, customOptions = {}) {
   // Add warnings for unsupported elements
   if (context.warnings && context.warnings.length > 0) {
     header += `#
-# ⚠️  UNSUPPORTED ELEMENTS (not converted):
+# ⚠️  CONVERSION WARNINGS (review before running):
 `;
     for (const warning of context.warnings) {
       header += `#   - ${warning}
